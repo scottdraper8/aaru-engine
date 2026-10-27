@@ -1,0 +1,23 @@
+[graph]
+all-features = true
+
+[advisories]
+
+[licenses]
+allow = ["MIT", "Apache-2.0", "BSD-3-Clause"]
+confidence-threshold = 0.95
+
+# This gate checks dependency licenses. First-party unpublished crates use the
+# exact checked-in PolyForm Strict license, independently enforced by repo-policy.
+[licenses.private]
+ignore = true
+
+[bans]
+wildcards = "deny"
+multiple-versions = "warn"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

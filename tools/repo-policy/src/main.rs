@@ -1,7 +1,8 @@
 //! Repository-specific supply-chain and check-integrity validation.
 
 use regex::Regex;
-use serde_yaml_ng::Value as Yaml;
+use serde_json::Value as Yaml;
+use sha2::{Digest, Sha256};
 use std::path::Path;
 use std::process::{Command, ExitCode};
 use std::sync::LazyLock;
@@ -96,7 +97,7 @@ fn lint_levels(name: &str, table: &toml::Table, errors: &mut Vec<String>) {
 fn permissions_are_read_only(value: &Yaml) -> bool {
     match value {
         Yaml::String(value) => value == "read-all",
-        Yaml::Mapping(value) => value
+        Yaml::Object(value) => value
             .values()
             .all(|v| matches!(v.as_str(), Some("read" | "none"))),
         _ => false,
@@ -125,12 +126,12 @@ fn workflow(name: &str, document: &Yaml, errors: &mut Vec<String>) {
             "workflow permissions must be explicitly read-only",
         );
     }
-    let Some(jobs) = document.get("jobs").and_then(Yaml::as_mapping) else {
+    let Some(jobs) = document.get("jobs").and_then(Yaml::as_object) else {
         issue(errors, name, "workflow must define jobs");
         return;
     };
     for (id, job) in jobs {
-        let label = format!("job {}", id.as_str().unwrap_or("<invalid>"));
+        let label = format!("job {id}");
         if !job
             .get("timeout-minutes")
             .and_then(Yaml::as_u64)
@@ -151,7 +152,7 @@ fn workflow(name: &str, document: &Yaml, errors: &mut Vec<String>) {
         if job.get("continue-on-error").and_then(Yaml::as_bool) == Some(true) {
             issue(errors, name, format!("{label} cannot ignore failure"));
         }
-        let Some(steps) = job.get("steps").and_then(Yaml::as_sequence) else {
+        let Some(steps) = job.get("steps").and_then(Yaml::as_array) else {
             issue(
                 errors,
                 name,
@@ -211,6 +212,19 @@ fn inspect_text(name: &str, text: &str) -> Vec<String> {
     let mut errors = Vec::new();
     let path = Path::new(name);
     let extension = path.extension().and_then(|s| s.to_str()).unwrap_or("");
+    if name == "LICENSE.md"
+        && Sha256::digest(text.as_bytes())
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+            != "9eb48619fbc193ab7bb327b090cfcc703000265b83e670f81f231d0b1c43c56e"
+    {
+        issue(
+            &mut errors,
+            name,
+            "must contain the exact upstream PolyForm Strict 1.0.0 license",
+        );
+    }
     if matches!(extension, "rs" | "js" | "mjs" | "ts" | "py") && SUPPRESSION.is_match(text) {
         issue(
             &mut errors,
@@ -270,12 +284,12 @@ fn inspect_text(name: &str, text: &str) -> Vec<String> {
         }
     }
     if name.starts_with(".github/workflows/") || name == ".pre-commit-config.yaml" {
-        match serde_yaml_ng::from_str::<Yaml>(text) {
+        match serde_saphyr::from_str::<Yaml>(text) {
             Ok(document) if name.starts_with(".github/workflows/") => {
                 workflow(name, &document, &mut errors)
             }
             Ok(document) => {
-                let Some(repos) = document.get("repos").and_then(Yaml::as_sequence) else {
+                let Some(repos) = document.get("repos").and_then(Yaml::as_array) else {
                     issue(&mut errors, name, "missing hook repositories");
                     return errors;
                 };
@@ -293,7 +307,7 @@ fn inspect_text(name: &str, text: &str) -> Vec<String> {
                             "hook revision must be an immutable commit",
                         );
                     }
-                    if let Some(items) = repo.get("hooks").and_then(Yaml::as_sequence) {
+                    if let Some(items) = repo.get("hooks").and_then(Yaml::as_array) {
                         hooks.extend(
                             items
                                 .iter()
@@ -347,10 +361,12 @@ fn inspect_repository() -> Result<Vec<String>, String> {
         }
         let path = Path::new(name);
         let extension = path.extension().and_then(|s| s.to_str()).unwrap_or("");
-        if !matches!(
-            extension,
-            "rs" | "js" | "mjs" | "ts" | "py" | "toml" | "json" | "yml" | "yaml" | "sh"
-        ) {
+        if name != "LICENSE.md"
+            && !matches!(
+                extension,
+                "rs" | "js" | "mjs" | "ts" | "py" | "toml" | "json" | "yml" | "yaml" | "sh"
+            )
+        {
             continue;
         }
         let staged = Command::new("git")
@@ -385,6 +401,15 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::inspect_text;
+
+    #[test]
+    fn first_party_license_is_validated_independently_of_dependency_licenses() {
+        let license = include_str!("../../../LICENSE.md");
+        assert!(inspect_text("LICENSE.md", license).is_empty());
+        assert!(
+            !inspect_text("LICENSE.md", &license.replace("Strict", "Noncommercial")).is_empty()
+        );
+    }
 
     #[test]
     fn dependency_ranges_and_git_sources_are_rejected() {
