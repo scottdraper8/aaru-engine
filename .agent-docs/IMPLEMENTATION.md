@@ -2,9 +2,13 @@
 
 ## Product
 
-A local-first, beginner-friendly Genshin account decision website. Rust is the
-source of truth, compiled to WebAssembly; no backend or game credentials required.
-Windows and Linux use the same browser UI. Authoritative intent is the full
+A local-first, beginner-friendly Genshin account decision website. First-party
+application code, browser UI, tests and repository tooling are written in Rust.
+Use WebAssembly with static HTML/CSS and generated bindings, not a Python/Node
+application or custom Python workflow. `pre-commit` is retained as explicitly
+requested; its implementation language does not authorize Python project code.
+No backend or game credentials required. Windows and Linux use the same browser
+UI. Authoritative intent is the full
 `genshin_decision_engine_design_memo.md`. Read it for nuance, not just this note.
 
 The user authorized initialization, remote creation, and PUBLIC visibility.
@@ -56,6 +60,9 @@ milestones only; the requested endpoint remains a release-ready product.
     and recomputation, not unexplained heuristic pair scores or weak test fixtures.
 14. No legacy code/shims or stale docs. Correctness/thoroughness over delivery speed.
 
+The PDF is reference material only. No PDF-specific tooling in pre-commit or CI;
+its text extraction is a one-time reading aid, never a project workflow.
+
 ## Evidence discipline
 
 Follow `behavioral_testing_overhaul_agent_protocol.md` and
@@ -71,21 +78,28 @@ Keep a compact current claim-evidence matrix, not a ledger of every action.
 ## Architecture and delivery
 
 Rust engine library with strict typed state and data-driven mechanics; WASM
-adapter exposes structured errors/results. Lightweight static website with a
-worker for expensive computations; no server-side inventory storage. Synthetic
-fixtures are loaded by the same import/evaluation path as user data. Keep public
-mechanics independently versioned; unsupported facts remain visible.
+adapter exposes structured errors/results. Rust browser UI (e.g. web-sys or a
+justified Rust UI framework), static HTML/CSS, generated JS glue only. Responsive
+bounded/asynchronous computation; no server-side inventory storage. Rust tooling
+owns builds/serving/security checks. Real browser tests also use Rust tooling,
+not a second Python/Node stack. Synthetic fixtures use the same import/evaluation
+path as user data. Public mechanics independently versioned; unsupported facts
+remain visible. Workspace foundation and Rust `aaru-repo-policy` already exist.
 
 ## Current state / next action
 
 Initial folder contained only the three supplied reference documents and an OS
 `.directory` file. There was no Git repository, source, tests or baseline to run.
-Rust 1.98.1 is installed under `$HOME/.cargo/bin` but that directory is not in the
-shell PATH. Node 26.12.1, Python, pre-commit 4.6.2, uv and authenticated gh exist.
+Rust 1.98.1 is installed under `$HOME/.cargo/bin`; prepend that directory when
+running cargo/pre-commit from the shell. Toolchain/wasm32/rustfmt/Clippy pinned in
+`rust-toolchain.toml`. pre-commit 4.6.2 and authenticated gh are available.
 
 Git initialized; PUBLIC remote created (explicit owner approval). GitHub
 vulnerability alerts and automated security fixes enabled; auto-merge disabled.
-Multi-phase build launched (artifacts in ignored `.agent-docs/tmp/big-build/aaru-engine`).
+Multi-phase build artifacts are in ignored `.agent-docs/tmp/big-build/aaru-engine`.
+Read current requirements before resuming; prior exploratory artifacts are not
+binding implementation decisions. Rust policy tests, formatting and strict
+Clippy have executed successfully; engine/UI evidence remains to be established.
 Independently verify the resulting implementation and checks before release.
 
 Hosted enforcement contract:

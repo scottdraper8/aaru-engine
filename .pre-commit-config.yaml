@@ -14,22 +14,11 @@ repos:
       - id: check-added-large-files
         args: ['--maxkb=2048']
       - id: detect-private-key
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: 25bcf95026b96e2dd3c0aec3090c3d6ef6ca2e6c # v0.17.3
-    hooks:
-      - id: ruff-check
-      - id: ruff-format
   - repo: local
     hooks:
       - id: repo-policy
-        name: exact pins, trust boundaries, and no check bypasses
-        entry: python3 tools/repo_policy.py
-        language: system
-        pass_filenames: false
-        always_run: true
-      - id: policy-tests
-        name: policy fault-detection tests
-        entry: python3 -m unittest discover -s tools -p test_*.py
+        name: Rust repository security and check-integrity policy
+        entry: cargo run --locked --quiet -p aaru-repo-policy
         language: system
         pass_filenames: false
         always_run: true
@@ -38,22 +27,16 @@ repos:
         entry: cargo fmt --all --check
         language: system
         pass_filenames: false
-        files: (\.rs$|Cargo\.(toml|lock)$|rust-toolchain\.toml$)
+        always_run: true
       - id: rust-clippy
         name: Rust linting without warnings
         entry: cargo clippy --workspace --all-targets --locked -- -D warnings
         language: system
         pass_filenames: false
-        files: (\.rs$|Cargo\.(toml|lock)$)
+        always_run: true
       - id: rust-tests
-        name: deterministic engine and inventory behavioral tests
+        name: Rust behavior and enforcement fault tests
         entry: cargo test --workspace --locked
         language: system
         pass_filenames: false
-        files: (\.rs$|Cargo\.(toml|lock)$|fixtures/.*\.json$)
-      - id: web-check
-        name: website lint and formatting
-        entry: npm run check
-        language: system
-        pass_filenames: false
-        files: (\.(js|mjs|ts|css|html)$|package(-lock)?\.json$|biome\.json$)
+        always_run: true

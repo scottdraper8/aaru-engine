@@ -23,8 +23,9 @@ in execution.” No release until all material gates have supporting evidence.
 | 14. Durable, lean context | `AGENTS.md`, `IMPLEMENTATION.md`, this acceptance map and original references. Temporary orchestration artifacts ignored; keep only useful current evidence. |
 | 15. Entire design memo | All 1,968 lines read at intake. Deterministic account reasoning, causal counterfactuals, opportunity cost, explicit objectives/uncertainty and trust boundaries govern implementation. |
 | 16. Extensive realistic synthetic data first | Open implementation gate: full inventory model plus substantial fixtures including unequipped weapons/artifacts, duplicates, progression and incomplete imports. Do not confuse fabricated accounts with verified mechanics or sufficient data from Battle Chronicle. |
-| Clarification: Rust | Rust owns deterministic validation/model/search/allocation/counterfactuals; thin web presentation is allowed, not a replacement engine in JavaScript. |
+| Clarification: Rust | All first-party application/UI/tests/repository tooling use Rust; static HTML/CSS and generated WASM bindings are allowed. Rust repo policy, six behavioral fault-test families, formatting and strict Clippy have executed successfully. No Python/Node project stack. |
 | Clarification: PUBLIC repository | Applied and verified via GitHub API. Do not revert to private or cite private-tier restrictions as blockers. |
+| Clarification: PDF is reference only | No PDF extraction/parsing/generation/linting in hooks or CI. One-time text extraction is solely a reading aid. |
 
 ## Current external configuration evidence
 

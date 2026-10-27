@@ -8,8 +8,10 @@ scope decisions. The two testing references in that directory govern evidence.
 
 ## Non-negotiable
 
-- Rust owns validation, mechanics, search, allocation, and counterfactuals. The
-  beginner-friendly website runs the engine locally through WebAssembly.
+- All first-party application, browser UI, tests and repository tooling use Rust.
+  Static HTML/CSS and generated WASM bindings are allowed; no Python/Node project
+  stack. `pre-commit` itself remains required. Rust owns all decision semantics.
+- The PDF is reference material only. No PDF-specific hooks or CI tooling.
 - Never bypass checks: no `--no-verify`, `SKIP`, disabled hooks, alternate hook
   paths, inline lint/type/security suppressions, ignored tests, or weakened gates
   to obtain a green result. Fix the cause. If blocked, report it and do not commit.
