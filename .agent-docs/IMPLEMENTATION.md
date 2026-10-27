@@ -156,8 +156,10 @@ Current handoff status: **G1 NOT ACCEPTED**. Do not start engine/UI consumers.
   Narrow independent follow-up finished21 owned controls and73/20/4 twice, no
   remaining budget code defect. It found one stale contradictory contract sentence;
   parent corrected that documentation-only defect. Review ownership is released.
-  Parent complete-snapshot/staged/hosted acceptance is pending; no consumer launch.
-  Native maximum tests are not browser memory/paint/Worker proof.
+  Complete reviewed snapshot/staged/all-files/native/WASM/security checks and normal
+  commit hooks passed. Parent repeated all21 probes. Foundation5b9c64f is pushed;
+  hosted acceptance is blocked, not consumer-ready. Native maximum tests are not
+  browser memory/paint/Worker proof.
 - Full-product replanner retry finished three bounded draft parts:
   `tmp/full-product-replan-retry-{architecture,delivery,acceptance}.md`, indexed by
   its distinct evidence report. Parent assessment/amendments are in
@@ -176,11 +178,18 @@ Current handoff status: **G1 NOT ACCEPTED**. Do not start engine/UI consumers.
   reject advisories regardless of severity and fail closed on errors. Live query,
   denied-warning cargo-audit and cargo-deny passed the checked snapshot. Rerun all
   on final integration; do not claim zero vulnerabilities or universal database coverage.
-- Committed/pushed baseline `72f2048`, run40530179308 attempt1 passed Linux native,
-  Windows native, dependency security (including framework advisories) and Quality
-  gate. Uncommitted G1 integration is not covered. Earlier run40493810875 attempt1
-  had real hardening/DNS connectivity failures and was cancelled; later successes
-  do not establish a resolver root-cause fix.
+- Current pushed foundation `5b9c64f3c36e7146735cdff1f0c57767b3c2b018`,
+  run40579865822: Windows native and dependency security succeeded; Linux checkout
+  failed three times connecting to allowed github.com under blocked egress. Raw
+  API/logs prove that failure even while run/job summaries still say in_progress.
+  Do not treat delayed summary status or later green as erasing this failure.
+- Official StepSecurityv2.22.3 released2026-10-27 explicitly addresses GitHub DNS/
+  outbound-proxy false blocks. Parent verified tag46b06cea07f9e64621fdf066ba77ac6915163d43,
+  source/checksums (Linux agent0.18.0), and updated all three immutable action pins;
+  Linux block/Windows audit/privilege/endpoint policy unchanged. Fresh hosted proof
+  remains pending; vendor release claim is not a measured repository root-cause fix.
+  Historical72f2048/run40530179308 passed;40493810875attempt1 also had real network
+  failures. Keep those evidence scopes distinct.
 - Tools: PATH includes `$HOME/.cargo/bin`; audit0.22.2, deny0.20.2 and
   wasm-bindgen0.2.129 under `/tmp/aaru-audit-tools/bin`. Sandbox Chrome/driver
   156.0.8078.47 paths/provenance are in `tmp/RUNTIME_PROBE.md`. Completed disposable
