@@ -305,6 +305,16 @@ impl DecisionSpec {
                 "mechanics origin does not match trusted account origin",
             ));
         }
+        self.validate_shape()?;
+        let snapshot = account.snapshot();
+        if let EvaluationScope::Subset { exclusions, .. } = &self.scope {
+            for exclusion in exclusions {
+                crate::references::validate_parameters(&exclusion.parameters, snapshot)?;
+            }
+        }
+        self.validate_resources(snapshot)
+    }
+    pub fn validate_shape(&self) -> ContractResult<()> {
         self.objective.validate()?;
         self.normalization.validate()?;
         if self.encounters.is_empty()
@@ -331,7 +341,9 @@ impl DecisionSpec {
                 "search limits must be positive; at most 128 results",
             ));
         }
-        let snapshot = account.snapshot();
+        Ok(())
+    }
+    fn validate_resources(&self, snapshot: &AccountSnapshot) -> ContractResult<()> {
         for character in snapshot.characters.records() {
             let affected = match &self.scope {
                 EvaluationScope::WholeSuppliedInventory => true,
@@ -663,6 +675,15 @@ impl Allocation {
                         .filter(|a| account.owners_share_resource(&a.owner, &owner))
                         .map(|a| (a.slot, a.id.clone()))
                         .collect::<BTreeMap<_, _>>();
+                    if (weapon.is_none() && !account.weapons.is_declared_complete())
+                        || (artifacts.len() != 5 && !account.artifacts.is_declared_complete())
+                    {
+                        return Err(ContractError::new(
+                            IssueCode::MissingSection,
+                            "/allocations/current_loadout",
+                            "current equipment has unresolved slots; absence from a partial or omitted section is not empty",
+                        ));
+                    }
                     if build.weapon != weapon || build.artifacts != artifacts {
                         return Err(invalid(
                             "current-loadout evaluation cannot reassign equipment",
@@ -773,18 +794,39 @@ pub enum Subject {
     Account(SnapshotId),
     Character(CharacterId),
     Item(ItemId),
-    Team(TeamId),
+    Team {
+        allocation: AllocationId,
+        team: TeamId,
+    },
     Allocation(AllocationId),
     Dimension(Dimension),
-    Assumption(DefinitionId),
+    Assumption(AssumptionRef),
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum AssumptionRef {
+    Global { key: DefinitionId },
+    Encounter { index: u16, key: DefinitionId },
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ComparisonSide {
+    Before,
+    After,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct CausalReason {
+pub struct ComparisonSubject {
+    pub side: ComparisonSide,
+    pub subject: Subject,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CausalReason<S> {
     pub id: ReasonId,
     pub code: ReasonCode,
     pub rule: RuleId,
-    pub subjects: Vec<Subject>,
+    pub subjects: Vec<S>,
     pub causes: Vec<ReasonId>,
     pub parameters: BTreeMap<String, Parameter>,
     pub provenance: Vec<RevisionId>,
@@ -795,7 +837,7 @@ pub struct LocalizedUncertainty {
     pub subject: Subject,
     pub metric: Option<DefinitionId>,
     pub fidelity: Fidelity,
-    pub assumptions: Vec<DefinitionId>,
+    pub assumptions: Vec<AssumptionRef>,
     pub explanation: String,
     pub provenance: Vec<RevisionId>,
 }
@@ -860,7 +902,7 @@ pub struct DecisionResult {
     pub exclusions: Vec<ImportIssue>,
     pub allocations: Vec<Allocation>,
     pub search: SearchReport,
-    pub reasons: Vec<CausalReason>,
+    pub reasons: Vec<CausalReason<Subject>>,
     pub uncertainty: Vec<LocalizedUncertainty>,
     pub provenance: Vec<Provenance>,
 }
@@ -1078,17 +1120,16 @@ impl DecisionResult {
                 _ => {}
             }
         }
-        let mut reasons = BTreeSet::new();
-        for reason in &self.reasons {
-            if reason.causes.iter().any(|c| !reasons.contains(c))
-                || !reasons.insert(reason.id.clone())
-            {
-                return Err(ContractError::new(
-                    IssueCode::InvalidReference,
-                    "/reasons",
-                    "duplicate reason or cause does not precede effect",
-                ));
-            }
+        let context = self.subject_context(account);
+        let reasons =
+            crate::references::validate_reasons(&self.reasons, account.snapshot(), |subject| {
+                context.resolve(subject).map(|_| ())
+            })?;
+        for uncertainty in &self.uncertainty {
+            context.validate_uncertainty(uncertainty)?;
+        }
+        for exclusion in &self.exclusions {
+            crate::references::validate_parameters(&exclusion.parameters, account.snapshot())?;
         }
         for allocation in &self.allocations {
             for reason in allocation
@@ -1156,7 +1197,7 @@ pub struct ComparisonResult {
     pub other_changes: Vec<CharacterChange>,
     pub global_delta: Metric,
     pub claim: ComparisonClaim,
-    pub reasons: Vec<CausalReason>,
+    pub reasons: Vec<CausalReason<ComparisonSubject>>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

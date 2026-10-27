@@ -1,10 +1,12 @@
 use crate::*;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, sync::Arc};
 
 pub const WORKER_MODULE_PATH: &str = "pkg/aaru-wasm/worker.js";
 pub const WORKER_BINDINGS_PATH: &str = "pkg/aaru-wasm/aaru_wasm.js";
 pub const WEB_MODULE_PATH: &str = "pkg/aaru-web/main.js";
+pub const SUPERVISOR_MODULE_PATH: &str = "pkg/aaru-web/supervisor.js";
+pub const WEB_BINDINGS_PATH: &str = "pkg/aaru-web/aaru_web.js";
 pub const FIXTURE_CATALOG_PATH: &str = "fixtures/catalog.json";
 pub const MECHANICS_MANIFEST_PATH: &str = "data/mechanics/manifest.json";
 
@@ -29,9 +31,17 @@ pub enum ImportFormat {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ImportInput {
-    File { format: ImportFormat, text: String },
-    Sample { id: SampleId },
-    Restore { backup: Box<Backup> },
+    File {
+        format: ImportFormat,
+        text: Arc<str>,
+        declarations: Vec<ImportDeclaration>,
+    },
+    Sample {
+        id: SampleId,
+    },
+    Restore {
+        backup: Arc<Backup>,
+    },
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
@@ -57,21 +67,21 @@ pub enum Request {
         storage: StorageDisposition,
     },
     Evaluate {
-        spec: DecisionSpec,
+        spec: Arc<DecisionSpec>,
     },
     Compare {
-        comparison: ComparisonSpec,
+        comparison: Arc<ComparisonSpec>,
     },
     PreparePreferences {
         preferences: AllocationPreferences,
     },
-    Recover {
-        state: RecoveryState,
+    Bootstrap {
+        input: RecoveryInput,
     },
     DiscardSession,
     Sensitivity {
-        baseline: DecisionSpec,
-        scenarios: Vec<SensitivityScenario>,
+        baseline: Arc<DecisionSpec>,
+        scenarios: Arc<Vec<SensitivityScenario>>,
     },
     Export {
         format: ExportFormat,
@@ -95,7 +105,7 @@ impl WorkerRequest {
             ));
         }
         if let Request::PrepareImport {
-            input: ImportInput::File { format, text },
+            input: ImportInput::File { format, text, .. },
         } = &self.payload
             && text.len()
                 > match format {
@@ -159,6 +169,8 @@ pub struct MechanicsEntry {
     pub mechanics: MechanicsRef,
     pub label: String,
     pub path: String,
+    pub normalization: Normalization,
+    pub presets: Vec<setup::DecisionPreset>,
     pub covered_definitions: BTreeSet<DefinitionId>,
     pub unsupported_definitions: BTreeSet<DefinitionId>,
     pub provenance: Vec<Provenance>,
@@ -170,6 +182,7 @@ pub struct Catalog {
     pub schema_version: CatalogVersion,
     pub samples: Vec<SampleEntry>,
     pub mechanics: Vec<MechanicsEntry>,
+    pub definitions: Vec<setup::PublicDefinition>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -177,7 +190,7 @@ pub struct ImportPreview {
     pub token: PreparedToken,
     pub replaces_generation: Counter,
     pub context: RequestContext,
-    pub backup: Backup,
+    pub backup: Arc<Backup>,
     pub canonical_digest: Digest,
     pub issues: Vec<ImportIssue>,
     pub capability: EvaluationCapability,
@@ -327,14 +340,17 @@ pub struct RequestContext {
 }
 #[derive(Debug)]
 enum PreparedSave {
+    Proposed,
     Writing,
     Committed(CommitReceipt),
+    SessionPromoted,
 }
 #[derive(Debug)]
 enum ResetLifecycle {
     Armed,
+    Proposed,
     Writing,
-    Committed(Box<DurableRecord>),
+    Committed(transport::DurableHead),
     SessionDiscard,
 }
 #[derive(Debug)]
@@ -344,7 +360,7 @@ pub struct SessionGate {
     issued: BTreeSet<RequestId>,
     pending: Option<WorkerRequest>,
     reset: Option<ResetLifecycle>,
-    recovery: Option<RecoveryState>,
+    recovery: Option<RecoveryInput>,
     prepared: Option<ImportPreview>,
     save: Option<PreparedSave>,
 }
@@ -361,6 +377,20 @@ impl SessionGate {
             save: None,
         }
     }
+    pub fn begin_bootstrap(&mut self, input: RecoveryInput) -> ContractResult<()> {
+        if !self.issued.is_empty()
+            || self.pending.is_some()
+            || self.reset.is_some()
+            || self.recovery.is_some()
+            || self.prepared.is_some()
+            || self.save.is_some()
+        {
+            return Err(authority_error());
+        }
+        input.selected_backup()?;
+        self.recovery = Some(input);
+        Ok(())
+    }
     pub fn context(&self) -> &RequestContext {
         &self.context
     }
@@ -374,12 +404,18 @@ impl SessionGate {
                 self.reset,
                 Some(ResetLifecycle::Armed | ResetLifecycle::Writing)
             )
-            || (self.save.is_some() && machine.phase() != &CommitPhase::Committed)
+            || (matches!(self.save, Some(PreparedSave::Writing))
+                && machine.phase() != &CommitPhase::Committed)
         {
             return Err(authority_error());
         }
         if let Some(ResetLifecycle::Committed(record)) = &self.reset
-            && machine.durable() != Some(record.as_ref())
+            && machine
+                .durable()
+                .map(transport::DurableHead::from_record)
+                .transpose()?
+                .as_ref()
+                != Some(record)
         {
             return Err(authority_error());
         }
@@ -391,16 +427,16 @@ impl SessionGate {
             .ok_or_else(authority_error)?;
         self.pending = None;
         self.issued.clear();
-        self.recovery = Some(machine.recovery_state());
+        self.recovery = Some(machine.recovery_input());
         self.prepared = None;
         self.save = None;
         Ok(())
     }
-    pub fn begin_prepared_save(
+    pub fn propose_prepared_save(
         &mut self,
         machine: &mut CommitMachine,
         token: &PreparedToken,
-    ) -> ContractResult<DurableRecord> {
+    ) -> ContractResult<Arc<DurableRecord>> {
         if self.save.is_some() || !self.preview_authoritative(token, &self.context) {
             return Err(authority_error());
         }
@@ -411,9 +447,46 @@ impl SessionGate {
             .backup
             .clone();
         machine.prepare(Some(backup), &self.context.epochs)?;
-        let candidate = machine.begin_save(&self.context.epochs)?.clone();
-        self.save = Some(PreparedSave::Writing);
+        let candidate = machine.proposed_record()?;
+        self.save = Some(PreparedSave::Proposed);
         Ok(candidate)
+    }
+    pub fn reserve_prepared_save(
+        &mut self,
+        machine: &mut CommitMachine,
+        expected: &transport::DurableHead,
+    ) -> ContractResult<()> {
+        if !matches!(self.save, Some(PreparedSave::Proposed)) {
+            return Err(authority_error());
+        }
+        machine.reserve_save(&self.context.epochs, expected)?;
+        self.save = Some(PreparedSave::Writing);
+        Ok(())
+    }
+    pub fn cancel_prepared_save(&mut self, machine: &mut CommitMachine) -> ContractResult<()> {
+        if !matches!(self.save, Some(PreparedSave::Proposed)) {
+            return Err(authority_error());
+        }
+        machine.invalidate_prepared(self.context.epochs.clone())?;
+        self.save = None;
+        self.prepared = None;
+        Ok(())
+    }
+    pub fn promote_prepared_session(
+        &mut self,
+        machine: &mut CommitMachine,
+        token: &PreparedToken,
+    ) -> ContractResult<()> {
+        if self.save.is_some() || !self.preview_authoritative(token, &self.context) {
+            return Err(authority_error());
+        }
+        machine.prepare(
+            self.prepared.as_ref().map(|p| p.backup.clone()),
+            &self.context.epochs,
+        )?;
+        machine.promote_session_only()?;
+        self.save = Some(PreparedSave::SessionPromoted);
+        Ok(())
     }
     pub fn storage_failed(&mut self, machine: &mut CommitMachine) -> ContractResult<()> {
         if !matches!(self.save, Some(PreparedSave::Writing))
@@ -452,7 +525,9 @@ impl SessionGate {
             if record.backup.is_some() {
                 return Err(authority_error());
             }
-            self.reset = Some(ResetLifecycle::Committed(Box::new(record.clone())));
+            self.reset = Some(ResetLifecycle::Committed(
+                transport::DurableHead::from_record(record)?,
+            ));
         } else if self.save.is_some() {
             let record = machine.durable().ok_or_else(authority_error)?;
             self.save = Some(PreparedSave::Committed(CommitReceipt {
@@ -485,33 +560,87 @@ impl SessionGate {
             _ => Err(authority_error()),
         }
     }
-    pub fn begin_reset_save(
+    pub fn propose_reset_save(
         &mut self,
         machine: &mut CommitMachine,
-    ) -> ContractResult<DurableRecord> {
+    ) -> ContractResult<Arc<DurableRecord>> {
         if !matches!(self.reset, Some(ResetLifecycle::Armed)) || self.recovery.is_some() {
             return Err(authority_error());
         }
         machine.invalidate_prepared(self.context.epochs.clone())?;
         machine.prepare(None, &self.context.epochs)?;
-        let candidate = machine.begin_save(&self.context.epochs)?.clone();
-        self.reset = Some(ResetLifecycle::Writing);
+        let candidate = machine.proposed_record()?;
+        self.reset = Some(ResetLifecycle::Proposed);
         Ok(candidate)
     }
+    pub fn reserve_reset_save(
+        &mut self,
+        machine: &mut CommitMachine,
+        expected: &transport::DurableHead,
+    ) -> ContractResult<()> {
+        if !matches!(self.reset, Some(ResetLifecycle::Proposed)) {
+            return Err(authority_error());
+        }
+        machine.reserve_save(&self.context.epochs, expected)?;
+        self.reset = Some(ResetLifecycle::Writing);
+        Ok(())
+    }
     pub fn abort_reset_before_save(&mut self, machine: &mut CommitMachine) -> ContractResult<()> {
-        if !matches!(self.reset, Some(ResetLifecycle::Armed)) {
+        if !matches!(
+            self.reset,
+            Some(ResetLifecycle::Armed | ResetLifecycle::Proposed)
+        ) {
             return Err(authority_error());
         }
         machine.invalidate_prepared(self.context.epochs.clone())?;
         self.reset = None;
         Ok(())
     }
+    pub fn install_privacy_clear(
+        &mut self,
+        clear: &transport::PrivacyClearMachine,
+    ) -> ContractResult<()> {
+        let epochs = &clear.authority().epochs;
+        if !epochs.succeeds(&self.context.epochs)
+            || epochs.worker != self.context.epochs.worker
+            || clear.authority().generation != self.generation
+            || !(self.context.epochs.reset.next() == Some(epochs.reset)
+                || (epochs.reset == self.context.epochs.reset
+                    && matches!(self.reset, Some(ResetLifecycle::Armed))))
+            || matches!(
+                self.save,
+                Some(
+                    PreparedSave::Writing
+                        | PreparedSave::Committed(_)
+                        | PreparedSave::SessionPromoted
+                )
+            )
+            || matches!(
+                self.reset,
+                Some(ResetLifecycle::Writing | ResetLifecycle::Committed(_))
+            )
+        {
+            return Err(authority_error());
+        }
+        let input = clear.cleared_bootstrap()?;
+        let StorageObservation::Readable { record } = &input.storage else {
+            return Err(authority_error());
+        };
+        self.reset = Some(ResetLifecycle::Committed(
+            transport::DurableHead::from_record(record)?,
+        ));
+        self.context.epochs = epochs.clone();
+        self.pending = None;
+        self.prepared = None;
+        self.save = None;
+        self.recovery = Some(input);
+        Ok(())
+    }
     pub fn discard_session_barrier(&mut self, machine: &mut CommitMachine) -> ContractResult<()> {
         if machine.epochs() != &self.context.epochs
-            || machine.durable().is_some()
             || matches!(
                 machine.phase(),
-                CommitPhase::Writing | CommitPhase::Committed
+                CommitPhase::Writing | CommitPhase::Committed | CommitPhase::ActivatingSession
             )
         {
             return Err(authority_error());
@@ -530,7 +659,7 @@ impl SessionGate {
                 p.payload,
                 Request::ActivatePrepared { .. }
                     | Request::Reset { .. }
-                    | Request::Recover { .. }
+                    | Request::Bootstrap { .. }
                     | Request::DiscardSession
             )
         }) {
@@ -549,6 +678,9 @@ impl SessionGate {
     }
     pub fn register(&mut self, request: &WorkerRequest) -> ContractResult<()> {
         request.validate()?;
+        if matches!(&request.payload, Request::Bootstrap { .. }) && self.recovery.is_none() {
+            return Err(authority_error());
+        }
         if request.context != self.context || request.account_generation != self.generation {
             return Err(authority_error());
         }
@@ -561,6 +693,13 @@ impl SessionGate {
                         ..
                     },
                 ) if receipt == expected => {}
+                (
+                    PreparedSave::SessionPromoted,
+                    Request::ActivatePrepared {
+                        storage: StorageDisposition::SessionOnly,
+                        ..
+                    },
+                ) => {}
                 _ => return Err(authority_error()),
             }
         }
@@ -568,19 +707,20 @@ impl SessionGate {
             (Some(ResetLifecycle::Committed(record)), Request::Reset { receipt })
                 if self.recovery.is_none()
                     && record.revision == receipt.revision
-                    && record.digest()? == receipt.record_digest => {}
-            (
-                Some(ResetLifecycle::Committed(record)),
-                Request::Recover {
-                    state: RecoveryState::Durable { record: observed },
-                },
-            ) if record == observed => {}
+                    && record.record_digest == receipt.record_digest => {}
+            (Some(ResetLifecycle::Committed(record)), Request::Bootstrap { input })
+                if matches!(&input.storage, StorageObservation::Readable { record: observed } if transport::DurableHead::from_record(observed).ok().as_ref() == Some(record))
+                    && matches!(input.active, ActiveSelection::ObservedDurable) => {}
             (Some(ResetLifecycle::SessionDiscard), Request::DiscardSession)
                 if self.recovery.is_none() => {}
             (
                 Some(ResetLifecycle::SessionDiscard),
-                Request::Recover {
-                    state: RecoveryState::SessionOnly { backup: None },
+                Request::Bootstrap {
+                    input:
+                        RecoveryInput {
+                            active: ActiveSelection::EmptySession,
+                            ..
+                        },
                 },
             ) => {}
             (None, Request::Reset { .. } | Request::DiscardSession) => {
@@ -590,7 +730,7 @@ impl SessionGate {
             _ => return Err(authority_error()),
         }
         if let Some(expected) = &self.recovery
-            && !matches!(&request.payload, Request::Recover { state } if state == expected)
+            && !matches!(&request.payload, Request::Bootstrap { input } if input == expected)
         {
             return Err(authority_error());
         }
@@ -606,7 +746,7 @@ impl SessionGate {
                 p.payload,
                 Request::ActivatePrepared { .. }
                     | Request::Reset { .. }
-                    | Request::Recover { .. }
+                    | Request::Bootstrap { .. }
                     | Request::DiscardSession
             )
         }) {
@@ -621,7 +761,7 @@ impl SessionGate {
             return Err(authority_error());
         }
         if let Request::ActivatePrepared { token, .. } = &request.payload
-            && !self.preview_authoritative(token, &request.context)
+            && (self.save.is_none() || !self.preview_authoritative(token, &request.context))
         {
             return Err(authority_error());
         }
@@ -636,6 +776,34 @@ impl SessionGate {
         Ok(())
     }
     pub fn accept(&mut self, event: &WorkerEvent) -> bool {
+        if matches!(
+            event.payload,
+            Event::Evaluated { .. } | Event::Compared { .. } | Event::SensitivityCompleted { .. }
+        ) {
+            return false;
+        }
+        self.accept_ordered(event)
+    }
+    pub fn accept_result(
+        &mut self,
+        event: &WorkerEvent,
+        account: &ValidatedAccount,
+    ) -> ContractResult<bool> {
+        match &event.payload {
+            Event::Evaluated { result } => result.validate_for(account)?,
+            Event::Compared { result } => result.validate_for(account)?,
+            Event::SensitivityCompleted { result } => result.validate_for(account)?,
+            _ => {
+                return Err(ContractError::new(
+                    IssueCode::InvalidInput,
+                    "/event",
+                    "contextual admission requires a decision, comparison or sensitivity result",
+                ));
+            }
+        }
+        Ok(self.accept_ordered(event))
+    }
+    fn accept_ordered(&mut self, event: &WorkerEvent) -> bool {
         let Some(request) = &self.pending else {
             return false;
         };
@@ -647,7 +815,7 @@ impl SessionGate {
         }
         let transition = match (&request.payload, &event.payload) {
             (
-                Request::ActivatePrepared { .. } | Request::Recover { .. },
+                Request::ActivatePrepared { .. } | Request::Bootstrap { .. },
                 Event::Activated {
                     previous_generation,
                     ..
@@ -655,8 +823,12 @@ impl SessionGate {
             )
             | (
                 Request::Reset { .. }
-                | Request::Recover {
-                    state: RecoveryState::Durable { .. },
+                | Request::Bootstrap {
+                    input:
+                        RecoveryInput {
+                            storage: StorageObservation::Readable { .. },
+                            active: ActiveSelection::ObservedDurable,
+                        },
                 },
                 Event::ResetAcknowledged {
                     previous_generation,
@@ -664,8 +836,12 @@ impl SessionGate {
             )
             | (
                 Request::DiscardSession
-                | Request::Recover {
-                    state: RecoveryState::SessionOnly { .. },
+                | Request::Bootstrap {
+                    input:
+                        RecoveryInput {
+                            active: ActiveSelection::EmptySession,
+                            ..
+                        },
                 },
                 Event::SessionDiscarded {
                     previous_generation,
@@ -681,9 +857,9 @@ impl SessionGate {
             }
             let expected = match &request.payload {
                 Request::ActivatePrepared { .. } => self.prepared.as_ref().map(|p| &p.backup),
-                Request::Recover { state } => match state {
-                    RecoveryState::Durable { record } => record.backup.as_ref(),
-                    RecoveryState::SessionOnly { backup } => backup.as_deref(),
+                Request::Bootstrap { input } => match input.selected_backup() {
+                    Ok(backup) => backup,
+                    Err(_) => return false,
                 },
                 _ => None,
             };
@@ -720,8 +896,8 @@ impl SessionGate {
             return false;
         }
         let compatible = match (&request.payload, &event.payload) {
-            (Request::GetCatalog, Event::Catalog { .. })
-            | (Request::Export { .. }, Event::Exported { .. }) => true,
+            (Request::GetCatalog, Event::Catalog { catalog }) => catalog.validate().is_ok(),
+            (Request::Export { .. }, Event::Exported { download }) => download.validate().is_ok(),
             (
                 Request::PrepareImport { .. } | Request::PreparePreferences { .. },
                 Event::ImportPrepared { preview },
@@ -730,10 +906,10 @@ impl SessionGate {
                 target == actual
             }
             (Request::Evaluate { spec }, Event::Evaluated { result }) => {
-                &result.spec == spec && self.result_context(result)
+                &result.spec == spec.as_ref() && self.result_context(result)
             }
             (Request::Compare { comparison }, Event::Compared { result }) => {
-                &result.comparison == comparison
+                &result.comparison == comparison.as_ref()
                     && result.before.spec == comparison.baseline
                     && result.after.spec == comparison.intervention_spec()
                     && self.result_context(&result.before)
@@ -746,7 +922,7 @@ impl SessionGate {
                 },
                 Event::SensitivityCompleted { result },
             ) => {
-                &result.baseline.spec == baseline
+                &result.baseline.spec == baseline.as_ref()
                     && result
                         .scenarios
                         .iter()
@@ -754,7 +930,7 @@ impl SessionGate {
                         .eq(scenarios.iter())
                     && self.result_context(&result.baseline)
                     && result.scenarios.iter().all(|s| {
-                        let mut expected = baseline.clone();
+                        let mut expected = baseline.as_ref().clone();
                         expected.assumptions = s.scenario.assumptions.clone();
                         expected.encounters = s.scenario.encounters.clone();
                         s.result.spec == expected && self.result_context(&s.result)

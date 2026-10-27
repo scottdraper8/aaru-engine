@@ -19,6 +19,8 @@ The acceptance map in `REQUIREMENTS.md` tracks each original owner requirement
 and later clarification. Keep it current. It is not permission to scope the final
 product down to an illustrative demo. Intermediate slices are implementation
 milestones only; the requested endpoint remains a release-ready product.
+`RELEASE_GATES.md` maps memo capabilities to observable behavior and independent
+acceptance evidence, including roster/investment value beyond equipment moves.
 
 ## Durable requirements
 
@@ -127,15 +129,44 @@ Current handoff status: **G1 NOT ACCEPTED**. Do not start engine/UI consumers.
   decoding at 77–92 ms. `tmp/g1-budget-evidence.md` records exact scope/provenance.
   The approved sibling-worker design is in `tmp/g1-bulk-architecture.md`, with
   binding integration amendments in `tmp/g1-bulk-acceptance.md`.
-- Contract integration uses `tmp/g1-transport-integration-prompt.md`; output is
-  `tmp/g1-transport-integration.md{,.json}`. Owns contract crate/CONTRACTS.md and
-  genuinely needed Cargo/lock integration only; do not overwrite its work. It
-  must freeze physical transport, safe reservations/bootstrap, retained session
-  and UI-state checkpoints, public setup metadata and honest current-slot knowledge.
-  Omitted inventory cannot become known-empty current gear.
+- Independent review `tmp/g1-independent-review-evidence.md` returned **G1 FIX
+  REQUIRED** despite independently passing 51 contract/20 policy/4 Git tests twice.
+  Six issues: DOM memory discard, account+UI-checkpoint transition ordering,
+  actual storage-refresh installation, activation rebinding, memory-only revision
+  exhaustion and matching traversal-shaped catalog paths. Four normative probes
+  failed; two additional transition gaps have executed witnesses/source arguments.
+  Parent additionally executed `tmp/g1-retention-finding.md`: saved A + session B
+  + candidate C retains three distinct source bodies despite bound two.
+- Composed repairs closed the original seven at native-contract scope; later
+  dangling-subject and unreadable-current-header probes still failed. Final-seam
+  writer finished both repairs: `tmp/g1-final-seam-repairs-evidence.md`, 71/20/4
+  cases and18 restored behavioral faults. Parent matched source fingerprint
+  `81bea9f7a9f453bfc380562e7a2cdaca5ce964c6a03cb513a8f9e61d54ac39b6`
+  and reproduced the complete tests/strict native/contract-WASM checks. Independent
+  final review finished15 probes, supporting all nine native seams; its whole-
+  comparison16MiB interpretation was wrong, reinforced by parent's review prompt.
+- Parent executed the compound-budget regression then corrected it after review:
+  `tmp/g1-compound-budget-finding.md` and `tmp/g1-budget-scope-evidence.md`.
+  Original profile is16MiB PER DECISION and128MiB TOTAL compound/final wire,
+  including envelope overhead. No lower whole-comparison cap. Corrected source
+  `bf5cb79a84ca4759369436e8e9c669a9241e73ea9eed24970b98ea3e5766cab9`
+  passes73/20/4, native/WASM strict checks, all-files pre-commit and security checks.
+  Three isolated full-suite budget faults fail assertions; exact restoration.
+  Original failing probes stay unchanged; new adapted whole harness74passes.
+  Narrow independent follow-up finished21 owned controls and73/20/4 twice, no
+  remaining budget code defect. It found one stale contradictory contract sentence;
+  parent corrected that documentation-only defect. Review ownership is released.
+  Parent complete-snapshot/staged/hosted acceptance is pending; no consumer launch.
+  Native maximum tests are not browser memory/paint/Worker proof.
+- Full-product replanner retry finished three bounded draft parts:
+  `tmp/full-product-replan-retry-{architecture,delivery,acceptance}.md`, indexed by
+  its distinct evidence report. Parent assessment/amendments are in
+  `tmp/full-product-replan-parent-review.md`; NOT yet adopted. Failed
+  original giant-write planner remains documented, not a completed plan. Reconcile
+  accepted APIs, full release rows and two disjoint leases before consumer launch.
 - Parent owns policy/hygiene, hooks/workflows/framework locks and acceptance docs.
-  Parent files are deliberately staged so checks inspect matching configuration;
-  contract coordinator must not stage/commit them. Parent integrates after review.
+  Contract coordinator must not stage or commit. Parent stages the complete reviewed
+  snapshot only after ownership settles; staged-blob checks must match that snapshot.
 - Locked local Rust hook equivalents retain pre-commit without separately resolved
   generic-hook environments. Policy passed 20 unit + 4 real temporary-Git/CLI tests,
   strict Clippy, formatting and actual staged-repository inspection. This includes
@@ -145,14 +176,30 @@ Current handoff status: **G1 NOT ACCEPTED**. Do not start engine/UI consumers.
   reject advisories regardless of severity and fail closed on errors. Live query,
   denied-warning cargo-audit and cargo-deny passed the checked snapshot. Rerun all
   on final integration; do not claim zero vulnerabilities or universal database coverage.
-- Hosted baseline `fd40cb8`, run40493810875 attempt2 passed Linux native, Windows
-  native, dependency security and Quality gate. Attempt1 had real hardening/DNS
-  connectivity failures and was cancelled. Unchanged rerun success does not prove
-  the resolver issue fixed. Current uncommitted changes need fresh hosted evidence.
+- Committed/pushed baseline `72f2048`, run40530179308 attempt1 passed Linux native,
+  Windows native, dependency security (including framework advisories) and Quality
+  gate. Uncommitted G1 integration is not covered. Earlier run40493810875 attempt1
+  had real hardening/DNS connectivity failures and was cancelled; later successes
+  do not establish a resolver root-cause fix.
 - Tools: PATH includes `$HOME/.cargo/bin`; audit0.22.2, deny0.20.2 and
   wasm-bindgen0.2.129 under `/tmp/aaru-audit-tools/bin`. Sandbox Chrome/driver
-  156.0.8078.47 paths/provenance are in `tmp/RUNTIME_PROBE.md`. Probe sessions and
-  server/driver processes are stopped. No production browser claim is established.
+  156.0.8078.47 paths/provenance are in `tmp/RUNTIME_PROBE.md`. Completed disposable
+  topology probe: `tmp/g0-topology-probe-evidence.md`, immutable 72f2048 dependency,
+  two real Linux Chrome runs and three detected runtime faults. Actual 16 MiB bytes,
+  sibling target disappearance, IDB abort/complete/CAS and retained-Blob behavior
+  observed. Local input-to-DOM cancellation 0.2–0.6 ms is NOT painted-pixel proof;
+  long-run Blob/RSS/revocation/production/Windows behavior remains open. Parent
+  independently verified no probe Chrome/driver processes or server ports remain.
+- Public-source research finished: `tmp/live-source-research-evidence.md`; parent
+  review `tmp/live-source-research-parent-review.md`. GOOD docs confirm optional
+  material balances in v2/v3 (absent remains unknown), unboosted talents and
+  percentage-point semantics; GOOD_REFERENCE.md now records documentary evidence.
+  Current gcsim notice is AGPLv3-or-later since 2026-09-19, not wholly MIT; no current
+  code reuse authorized. KQM/data/prose/artwork rights and actual numeric/cost tables
+  remain unresolved. Directory counts include custom definitions, not live coverage.
+  Parent flagged the proposed ICD timeline as insensitive to its stated fault;
+  strengthen and execute future oracles, never inherit a green assertion blindly.
+  Research is not mechanics implementation or waiver of substantial fixtures first.
 - Unnecessary first-party source/test/config comments were removed. Necessary
   action-version metadata remains. Keep the rule in all subsequent implementations.
 - Next: independently review stable integrated G1; run full locked native/WASM,

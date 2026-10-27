@@ -239,17 +239,15 @@ impl ComparisonResult {
                 "selected character changes must be exhaustive, including unchanged controls",
             ));
         }
-        let mut reasons = BTreeSet::new();
-        if self.reasons.len() > MAX_RESULT_REASONS {
-            return Err(invalid("comparison reason budget exceeded"));
-        }
-        for reason in &self.reasons {
-            if reason.causes.iter().any(|c| !reasons.contains(c))
-                || !reasons.insert(reason.id.clone())
-            {
-                return Err(invalid("comparison causes must precede effects"));
+        let before = self.before.subject_context(account);
+        let after = self.after.subject_context(account);
+        let reasons = crate::references::validate_reasons(&self.reasons, snapshot, |reference| {
+            match reference.side {
+                ComparisonSide::Before => before.resolve(&reference.subject),
+                ComparisonSide::After => after.resolve(&reference.subject),
             }
-        }
+            .map(|_| ())
+        })?;
         for change in std::iter::once(&self.recipient)
             .chain(self.donor.iter().flat_map(|d| &d.forms))
             .chain(&self.other_changes)
@@ -257,8 +255,24 @@ impl ComparisonResult {
             if change.reasons.iter().any(|r| !reasons.contains(r)) {
                 return Err(invalid("dangling character change reason"));
             }
+            for metric in change.metric_deltas.keys() {
+                if !self
+                    .before
+                    .allocations
+                    .first()
+                    .into_iter()
+                    .chain(self.after.allocations.first())
+                    .flat_map(|a| &a.teams)
+                    .flat_map(|t| &t.builds)
+                    .any(|b| b.character == change.character && b.metrics.contains_key(metric))
+                {
+                    return Err(invalid(
+                        "character delta metric is absent from selected builds",
+                    ));
+                }
+            }
         }
-        Ok(())
+        wire::encode(self).map(|_| ())
     }
 }
 fn validate_fallback(
@@ -286,11 +300,29 @@ fn validate_fallback(
             .flat_map(|t| &t.builds)
             .find(|b| account.availability(&b.character).ok() == Some(availability))
             .ok_or_else(|| invalid("fallback requires a participating donor form"))?;
+        let recipient = before
+            .teams
+            .iter()
+            .flat_map(|t| &t.builds)
+            .find(|b| b.character == movement.recipient)
+            .ok_or_else(|| invalid("recipient must participate"))?;
+        let moved_slot = account
+            .artifacts
+            .records()
+            .iter()
+            .find(|a| a.id == movement.item)
+            .map(|a| a.slot);
+        let displaced = match moved_slot {
+            Some(slot) => recipient.artifacts.get(&slot),
+            None => recipient.weapon.as_ref(),
+        };
         if availability == account.availability(&movement.recipient)?
-            || account.item_owner(item).map(|(owner, _)| owner) != Some(&OwnerRef::Unequipped)
+            || item == &movement.item
+            || (displaced != Some(item)
+                && account.item_owner(item).map(|(owner, _)| owner) != Some(&OwnerRef::Unequipped))
         {
             return Err(invalid(
-                "fallback must be unequipped and used by a participating distinct donor",
+                "fallback must be the recipient's exact displaced item or an unequipped item for a distinct participating donor",
             ));
         }
         account.validate_move(&ItemMove {

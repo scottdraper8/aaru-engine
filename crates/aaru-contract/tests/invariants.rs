@@ -1,5 +1,55 @@
+use aaru_contract::transport::*;
 use aaru_contract::*;
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
+#[path = "cases/references.rs"]
+mod reference_cases;
+#[path = "cases/transport.rs"]
+mod transport_cases;
+
+fn observed(record: impl Into<Arc<DurableRecord>>) -> RecoveryInput {
+    RecoveryInput {
+        storage: StorageObservation::Readable {
+            record: record.into(),
+        },
+        active: ActiveSelection::ObservedDurable,
+    }
+}
+fn unread() -> RecoveryInput {
+    RecoveryInput {
+        storage: StorageObservation::Unavailable {
+            last_observed_head: None,
+        },
+        active: ActiveSelection::EmptySession,
+    }
+}
+fn reserve(machine: &mut CommitMachine, epochs: &Epochs) -> ContractResult<Arc<DurableRecord>> {
+    let head = DurableHead::from_record(machine.durable().ok_or_else(|| {
+        ContractError::new(IssueCode::StorageFailure, "", "no readable storage")
+    })?)?;
+    machine.reserve_save(epochs, &head)
+}
+fn reserve_reset(
+    gate: &mut SessionGate,
+    machine: &mut CommitMachine,
+) -> ContractResult<Arc<DurableRecord>> {
+    let proposed = gate.propose_reset_save(machine)?;
+    let expected = DurableHead::from_record(machine.durable().unwrap())?;
+    gate.reserve_reset_save(machine, &expected)?;
+    Ok(proposed)
+}
+fn reserve_prepared(
+    gate: &mut SessionGate,
+    machine: &mut CommitMachine,
+    token: &PreparedToken,
+) -> ContractResult<Arc<DurableRecord>> {
+    let proposed = gate.propose_prepared_save(machine, token)?;
+    let expected = DurableHead::from_record(machine.durable().unwrap())?;
+    gate.reserve_prepared_save(machine, &expected)?;
+    Ok(proposed)
+}
 
 fn id<T: TryFrom<String>>(value: &str) -> T
 where
@@ -40,6 +90,22 @@ fn account() -> AccountSnapshot {
         source_archive: None,
         provenance: vec![],
     }
+}
+fn complete<T>(records: Vec<T>) -> Section<T> {
+    Section::Supplied {
+        completeness: Completeness::DeclaredComplete {
+            asserted_by: CompletenessAuthority::User {
+                statement: "Normative fixture declares all current equipment".into(),
+            },
+        },
+        records,
+    }
+}
+fn current_account() -> AccountSnapshot {
+    let mut a = account();
+    a.weapons = complete(a.weapons.records().to_vec());
+    a.artifacts = complete(vec![]);
+    a
 }
 fn weapon(name: &str) -> WeaponInstance {
     WeaponInstance {
@@ -435,17 +501,21 @@ fn copies_omissions_external_reservations_and_source_bytes_are_distinct() {
         IssueCode::UnresolvedOwner
     );
     let source = "{\n  \"format\": \"GOOD\", \"value\": 3.9000\n}\n";
-    a.source_archive = Some(SourceArchive {
-        format: SourceFormat::Good {
-            dialect_version: 3,
-            profile: ImportProfileVersion,
-        },
-        utf8: source.into(),
-        sha256: Digest::of(source.as_bytes()),
-    });
+    a.source_archive = Some(
+        SourceArchive {
+            format: SourceFormat::Good {
+                dialect_version: 3,
+                profile: ImportProfileVersion,
+            },
+            utf8: source.into(),
+            sha256: Digest::of(source.as_bytes()),
+        }
+        .into(),
+    );
     a.validate().unwrap();
     let text = wire::encode(&a).unwrap();
-    let restored = ValidatedAccount::imported(wire::decode(&text).unwrap()).unwrap();
+    let restored =
+        ValidatedAccount::imported(wire::decode::<AccountSnapshot>(&text).unwrap()).unwrap();
     assert_eq!(
         restored
             .snapshot()
@@ -475,7 +545,9 @@ fn copies_omissions_external_reservations_and_source_bytes_are_distinct() {
         download.validate().unwrap_err().code,
         IssueCode::InvalidInput
     );
-    a.source_archive.as_mut().unwrap().utf8.push(' ');
+    Arc::make_mut(a.source_archive.as_mut().unwrap())
+        .utf8
+        .push(' ');
     assert_eq!(
         a.validate().unwrap_err().code,
         IssueCode::InvalidSourceDigest
@@ -520,14 +592,17 @@ fn imported_game_lock_is_not_an_aaru_policy_and_synthetic_trust_cannot_be_import
             .unwrap()
             .permits(&spec().mechanics)
     );
-    a.source_archive = Some(SourceArchive {
-        format: SourceFormat::Good {
-            dialect_version: 3,
-            profile: ImportProfileVersion,
-        },
-        utf8: "{}".into(),
-        sha256: Digest::of(b"{}"),
-    });
+    a.source_archive = Some(
+        SourceArchive {
+            format: SourceFormat::Good {
+                dialect_version: 3,
+                profile: ImportProfileVersion,
+            },
+            utf8: "{}".into(),
+            sha256: Digest::of(b"{}"),
+        }
+        .into(),
+    );
     assert_eq!(
         ValidatedAccount::bundled(a, SampleId::SynWelcome)
             .unwrap_err()
@@ -535,7 +610,7 @@ fn imported_game_lock_is_not_an_aaru_policy_and_synthetic_trust_cannot_be_import
         IssueCode::SyntheticOnImportedAccount
     );
     let restored = ValidatedAccount::imported(
-        wire::decode(&wire::encode(sample.snapshot()).unwrap()).unwrap(),
+        wire::decode::<AccountSnapshot>(&wire::encode(sample.snapshot()).unwrap()).unwrap(),
     )
     .unwrap();
     assert!(!restored.permits(&spec().mechanics));
@@ -698,34 +773,62 @@ fn error_event() -> Event {
 #[test]
 fn ui_authority_rejects_reversed_completion_wrong_fingerprints_cancellation_and_restart() {
     let mut gate = SessionGate::new(context(), Counter(0));
-    let old = request("old", Request::Evaluate { spec: spec() }, 0);
+    let old = request(
+        "old",
+        Request::Evaluate {
+            spec: spec().into(),
+        },
+        0,
+    );
     gate.register(&old).unwrap();
     let mut changed = spec();
     changed.objective.weights = [(Dimension::EnergyStability, Fixed::ONE)].into();
-    let new = request("new", Request::Evaluate { spec: changed }, 0);
+    let new = request(
+        "new",
+        Request::Evaluate {
+            spec: changed.into(),
+        },
+        0,
+    );
     gate.register(&new).unwrap();
     let old_result = Event::Evaluated {
         result: Box::new(result(&account())),
     };
-    assert!(!gate.accept(&reply(&old, old_result.clone(), Counter(0))));
-    assert!(!gate.accept(&reply(&new, old_result, Counter(0))));
+    let trusted = ValidatedAccount::bundled(account(), SampleId::SynWelcome).unwrap();
+    assert!(
+        !gate
+            .accept_result(&reply(&old, old_result.clone(), Counter(0)), &trusted)
+            .unwrap()
+    );
+    assert!(
+        !gate
+            .accept_result(&reply(&new, old_result, Counter(0)), &trusted)
+            .unwrap()
+    );
     let mut forged = reply(&new, error_event(), Counter(0));
     forged.fingerprint = old.fingerprint.clone();
     assert!(!gate.accept(&forged));
     let mut late = result(&account());
     if let Request::Evaluate { spec } = &new.payload {
-        late.spec = spec.clone();
+        late.spec = spec.as_ref().clone();
     }
     rebind(&mut late, &account());
     let cancel = request("cancel", Request::Cancel { target: id("new") }, 0);
     gate.register(&cancel).unwrap();
-    assert!(!gate.accept(&reply(
-        &new,
-        Event::Evaluated {
-            result: Box::new(late)
-        },
-        Counter(0)
-    )));
+    assert!(
+        !gate
+            .accept_result(
+                &reply(
+                    &new,
+                    Event::Evaluated {
+                        result: Box::new(late)
+                    },
+                    Counter(0)
+                ),
+                &trusted
+            )
+            .unwrap()
+    );
     assert!(gate.accept(&reply(
         &cancel,
         Event::CancelAcknowledged {
@@ -739,18 +842,18 @@ fn ui_authority_rejects_reversed_completion_wrong_fingerprints_cancellation_and_
     let machine = CommitMachine::new(
         context().epochs,
         true,
-        DurableRecord {
+        observed(DurableRecord {
             revision: Counter(0),
             backup: None,
-        },
+        }),
     )
     .unwrap();
     gate.restart_worker(&machine).unwrap();
     assert!(!gate.accept(&reply(&catalog, error_event(), Counter(0))));
     let recover = request_in(
         "reuse",
-        Request::Recover {
-            state: machine.recovery_state(),
+        Request::Bootstrap {
+            input: machine.recovery_input(),
         },
         Counter(0),
         gate.context().clone(),
@@ -784,7 +887,7 @@ fn preview(validated: &ValidatedAccount) -> ImportPreview {
         replaces_generation: Counter(0),
         context: context(),
         canonical_digest: backup.digest().unwrap(),
-        backup,
+        backup: backup.into(),
         issues: vec![],
         capability: EvaluationCapability {
             supported: [Operation::ExportCanonical].into(),
@@ -832,11 +935,7 @@ fn prepared_activation_binds_source_preferences_epochs_and_is_idempotent() {
         revision: Counter(1),
         backup: Some(p.backup.clone()),
     };
-    record
-        .backup
-        .as_mut()
-        .unwrap()
-        .account
+    Arc::make_mut(&mut Arc::make_mut(record.backup.as_mut().unwrap()).account)
         .preferences
         .game_lock_policy = GameLockPolicy::AllowReassignment;
     let bad = StorageDisposition::Persisted {
@@ -889,7 +988,11 @@ fn rebind(result: &mut DecisionResult, account: &AccountSnapshot) {
     .unwrap();
 }
 fn comparison_case(current: bool) -> (ValidatedAccount, ComparisonResult) {
-    let mut a = account();
+    let mut a = if current {
+        current_account()
+    } else {
+        account()
+    };
     if let Section::Supplied { records, .. } = &mut a.weapons {
         records[0].owner = OwnerRef::Character(id("c1"));
     }
@@ -1082,6 +1185,8 @@ fn availability_identity_blocks_duplicate_characters_forms_and_unknown_resources
     }
     a.validate().unwrap();
     let mut gear = a.clone();
+    gear.weapons = complete(gear.weapons.records().to_vec());
+    gear.artifacts = complete(vec![]);
     if let Section::Supplied { records, .. } = &mut gear.weapons {
         records[0].owner = OwnerRef::Character(id("c0"));
         records[0].game_lock = Some(true);
@@ -1202,16 +1307,19 @@ fn normalization_aggregation_and_frontier_claims_have_distinct_boundaries() {
 #[test]
 fn durable_failure_and_recovery_follow_the_actual_commit_point_not_worker_activation() {
     let c = context();
-    let old = Backup::from_validated(&ValidatedAccount::imported(account()).unwrap()).unwrap();
+    let old =
+        Arc::new(Backup::from_validated(&ValidatedAccount::imported(account()).unwrap()).unwrap());
     let mut new = old.clone();
-    new.account.preferences.game_lock_policy = GameLockPolicy::AllowReassignment;
+    Arc::make_mut(&mut Arc::make_mut(&mut new).account)
+        .preferences
+        .game_lock_policy = GameLockPolicy::AllowReassignment;
     let durable = DurableRecord {
         revision: Counter(1),
         backup: Some(old.clone()),
     };
-    let mut m = CommitMachine::new(c.epochs.clone(), true, durable.clone()).unwrap();
+    let mut m = CommitMachine::new(c.epochs.clone(), true, observed(durable.clone())).unwrap();
     m.prepare(Some(new.clone()), &c.epochs).unwrap();
-    m.begin_save(&c.epochs).unwrap();
+    reserve(&mut m, &c.epochs).unwrap();
     assert!(m.prepare(None, &c.epochs).is_err());
     let mut restarted = c.epochs.clone();
     restarted.worker = Counter(1);
@@ -1219,74 +1327,64 @@ fn durable_failure_and_recovery_follow_the_actual_commit_point_not_worker_activa
     m.storage_failed(&c.epochs).unwrap();
     assert_eq!(m.active(), Some(&old));
     assert_eq!(m.durable(), Some(&durable));
-    let candidate = m.begin_save(&c.epochs).unwrap().clone();
+    let candidate = reserve(&mut m, &c.epochs).unwrap();
     let mut wrong = receipt(&candidate, &c.epochs);
     wrong.record_digest = Digest::of(b"partial");
     assert!(m.storage_committed(&wrong).is_err());
     m.storage_committed(&receipt(&candidate, &c.epochs))
         .unwrap();
     assert_eq!(m.active(), Some(&old));
-    assert_eq!(m.durable(), Some(&candidate));
-    m.recover(
-        restarted.clone(),
-        RecoveryState::Durable {
-            record: Box::new(candidate.clone()),
-        },
-    )
-    .unwrap();
+    assert_eq!(m.durable(), Some(candidate.as_ref()));
+    m.bootstrap(restarted.clone(), observed(candidate.clone()))
+        .unwrap();
     assert_eq!(m.active(), Some(&new));
     assert!(
         m.storage_committed(&receipt(&candidate, &c.epochs))
             .is_err()
     );
     m.prepare(None, &restarted).unwrap();
-    let tombstone = m.begin_save(&restarted).unwrap().clone();
+    let tombstone = reserve(&mut m, &restarted).unwrap();
     m.storage_committed(&receipt(&tombstone, &restarted))
         .unwrap();
     m.activate_committed().unwrap();
     assert_eq!(m.active(), None);
-    assert!(CommitMachine::new(restarted.clone(), false, durable.clone()).is_err());
-    let mut lost_callback = CommitMachine::new(c.epochs.clone(), true, durable.clone()).unwrap();
+    assert!(CommitMachine::new(restarted.clone(), false, observed(durable.clone())).is_err());
+    let mut lost_callback =
+        CommitMachine::new(c.epochs.clone(), true, observed(durable.clone())).unwrap();
     lost_callback.prepare(Some(new.clone()), &c.epochs).unwrap();
-    lost_callback.begin_save(&c.epochs).unwrap();
+    reserve(&mut lost_callback, &c.epochs).unwrap();
     lost_callback
-        .settle_storage(&c.epochs, candidate.clone())
+        .settle_storage(&c.epochs, candidate.as_ref().clone())
         .unwrap();
     lost_callback
-        .recover(
-            restarted.clone(),
-            RecoveryState::Durable {
-                record: Box::new(candidate),
-            },
-        )
+        .bootstrap(restarted.clone(), observed(candidate))
         .unwrap();
     assert_eq!(lost_callback.active(), Some(&new));
-    let mut aborted = CommitMachine::new(c.epochs.clone(), true, durable.clone()).unwrap();
+    let mut aborted =
+        CommitMachine::new(c.epochs.clone(), true, observed(durable.clone())).unwrap();
     aborted.prepare(Some(new.clone()), &c.epochs).unwrap();
-    aborted.begin_save(&c.epochs).unwrap();
+    reserve(&mut aborted, &c.epochs).unwrap();
     aborted.settle_storage(&c.epochs, durable.clone()).unwrap();
     aborted
-        .recover(
-            restarted.clone(),
-            RecoveryState::Durable {
-                record: Box::new(durable.clone()),
-            },
-        )
+        .bootstrap(restarted.clone(), observed(durable.clone()))
         .unwrap();
     assert_eq!(aborted.active(), Some(&old));
     aborted.prepare(Some(new.clone()), &restarted).unwrap();
-    aborted.activate_session_only().unwrap();
+    aborted.promote_session_only().unwrap();
+    assert_eq!(aborted.phase(), &CommitPhase::ActivatingSession);
     assert_eq!(aborted.active(), Some(&new));
-    assert_eq!(aborted.durable(), Some(&durable));
-    aborted
-        .recover(
-            restarted,
-            RecoveryState::Durable {
-                record: Box::new(durable),
-            },
-        )
-        .unwrap();
-    assert_eq!(aborted.active(), Some(&old));
+    assert_eq!(
+        aborted.durable_head().unwrap(),
+        Some(DurableHead::from_record(&durable).unwrap())
+    );
+    assert!(
+        aborted
+            .bootstrap(restarted.clone(), observed(durable))
+            .is_err()
+    );
+    let intended = aborted.recovery_input();
+    aborted.bootstrap(restarted, intended).unwrap();
+    assert_eq!(aborted.active(), Some(&new));
 }
 
 #[test]
@@ -1303,7 +1401,7 @@ fn sample_restoration_rechecks_bundled_inventory_while_preferences_preserve_trus
     assert!(b.restore(Some(&imported)).is_err());
     assert!(b.restore(Some(&sample)).unwrap().permits(&spec().mechanics));
     let mut tampered = b.clone();
-    tampered.account.id = id("different-account");
+    Arc::make_mut(&mut tampered.account).id = id("different-account");
     assert!(tampered.restore(Some(&sample)).is_err());
     tampered = b;
     tampered.sample = None;
@@ -1335,10 +1433,10 @@ fn reset_during_import_invalidates_previews_and_storage_authority_before_acknowl
     let mut commits = CommitMachine::new(
         context().epochs,
         true,
-        DurableRecord {
+        observed(DurableRecord {
             revision: Counter(0),
             backup: None,
-        },
+        }),
     )
     .unwrap();
     commits
@@ -1350,9 +1448,9 @@ fn reset_during_import_invalidates_previews_and_storage_authority_before_acknowl
         .unwrap();
     assert!(!gate.accept(&response));
     assert!(!gate.preview_authoritative(&p.token, &p.context));
-    assert!(commits.begin_save(&p.context.epochs).is_err());
-    let tombstone = gate.begin_reset_save(&mut commits).unwrap();
-    assert!(commits.activate_session_only().is_err());
+    assert!(reserve(&mut commits, &p.context.epochs).is_err());
+    let tombstone = reserve_reset(&mut gate, &mut commits).unwrap();
+    assert!(commits.promote_session_only().is_err());
     let committed = receipt(&tombstone, &gate.context().epochs);
     gate.storage_committed(&mut commits, &committed).unwrap();
     let mut bad_receipt = committed.clone();
@@ -1431,7 +1529,7 @@ fn saving_reserves_foreground_until_commit_and_matching_activation() {
         "import",
         Request::PrepareImport {
             input: ImportInput::Restore {
-                backup: Box::new(p.backup.clone()),
+                backup: p.backup.clone(),
             },
         },
         0,
@@ -1447,13 +1545,13 @@ fn saving_reserves_foreground_until_commit_and_matching_activation() {
     let mut machine = CommitMachine::new(
         context().epochs,
         true,
-        DurableRecord {
+        observed(DurableRecord {
             revision: Counter(0),
             backup: None,
-        },
+        }),
     )
     .unwrap();
-    let candidate = gate.begin_prepared_save(&mut machine, &p.token).unwrap();
+    let candidate = reserve_prepared(&mut gate, &mut machine, &p.token).unwrap();
     for storage in [
         StorageDisposition::SessionOnly,
         StorageDisposition::Persisted {
@@ -1475,8 +1573,8 @@ fn saving_reserves_foreground_until_commit_and_matching_activation() {
     assert!(
         gate.register(&request(
             "premature-recover",
-            Request::Recover {
-                state: machine.recovery_state()
+            Request::Bootstrap {
+                input: machine.recovery_input()
             },
             0
         ))
@@ -1502,7 +1600,7 @@ fn saving_reserves_foreground_until_commit_and_matching_activation() {
     assert_eq!(machine.active(), None);
     assert_eq!(
         candidate,
-        gate.begin_prepared_save(&mut machine, &p.token).unwrap()
+        reserve_prepared(&mut gate, &mut machine, &p.token).unwrap()
     );
     let receipt = receipt(&candidate, &context().epochs);
     gate.storage_committed(&mut machine, &receipt).unwrap();
@@ -1549,18 +1647,26 @@ fn saving_reserves_foreground_until_commit_and_matching_activation() {
     assert_eq!(machine.active(), Some(&p.backup));
     let evaluate = request_in(
         "decision",
-        Request::Evaluate { spec: spec() },
+        Request::Evaluate {
+            spec: spec().into(),
+        },
         Counter(1),
         gate.context().clone(),
     );
     gate.register(&evaluate).unwrap();
-    assert!(gate.accept(&reply(
-        &evaluate,
-        Event::Evaluated {
-            result: Box::new(result(&account()))
-        },
-        Counter(1)
-    )));
+    assert!(
+        gate.accept_result(
+            &reply(
+                &evaluate,
+                Event::Evaluated {
+                    result: Box::new(result(&account()))
+                },
+                Counter(1)
+            ),
+            &ValidatedAccount::bundled(account(), SampleId::SynWelcome).unwrap()
+        )
+        .unwrap()
+    );
 }
 
 #[test]
@@ -1583,7 +1689,7 @@ fn donor_fallback_and_required_rule_boundaries_reject_adversarial_resources() {
             .is_err()
     );
     let mut a = trusted.snapshot().clone();
-    a.artifacts = supplied(vec![ArtifactInstance {
+    a.artifacts = complete(vec![ArtifactInstance {
         id: id("flower"),
         set: id("syn:set"),
         slot: ArtifactSlot::Flower,
@@ -1929,6 +2035,7 @@ fn foreground_preparation_export_and_catalog_are_explicitly_cancellable() {
                     schema_version: CatalogVersion,
                     samples: vec![],
                     mechanics: vec![],
+                    definitions: vec![],
                 },
             },
         ),
@@ -1982,11 +2089,29 @@ fn foreground_preparation_export_and_catalog_are_explicitly_cancellable() {
     }
 }
 
+#[test]
+fn current_loadout_requires_known_slots_not_an_empty_records_view() {
+    let mut a = account();
+    if let Section::Supplied { records, .. } = &mut a.weapons {
+        records[0].owner = OwnerRef::Character(id("c0"));
+    }
+    let mut s = spec();
+    s.assignments = AssignmentDomain::CurrentLoadout;
+    assert_eq!(
+        allocation().validate(&a, &s).unwrap_err().code,
+        IssueCode::MissingSection
+    );
+    s.assignments = AssignmentDomain::Unrestricted;
+    allocation().validate(&a, &s).unwrap();
+}
+
 fn durable_account() -> DurableRecord {
     DurableRecord {
         revision: Counter(10),
         backup: Some(
-            Backup::from_validated(&ValidatedAccount::imported(account()).unwrap()).unwrap(),
+            Backup::from_validated(&ValidatedAccount::imported(account()).unwrap())
+                .unwrap()
+                .into(),
         ),
     }
 }
@@ -1996,7 +2121,9 @@ fn gate_request(gate: &SessionGate, name: &str, payload: Request) -> WorkerReque
 fn assert_foreground_blocked(gate: &mut SessionGate) {
     for payload in [
         Request::GetCatalog,
-        Request::Evaluate { spec: spec() },
+        Request::Evaluate {
+            spec: spec().into(),
+        },
         Request::Export {
             format: ExportFormat::Canonical,
         },
@@ -2014,16 +2141,24 @@ fn assert_old_account_usable(gate: &mut SessionGate) {
     let evaluation = gate_request(
         gate,
         "evaluate-after-abort",
-        Request::Evaluate { spec: spec() },
+        Request::Evaluate {
+            spec: spec().into(),
+        },
     );
     gate.register(&evaluation).unwrap();
-    assert!(gate.accept(&reply(
-        &evaluation,
-        Event::Evaluated {
-            result: Box::new(result(&account()))
-        },
-        gate.generation()
-    )));
+    assert!(
+        gate.accept_result(
+            &reply(
+                &evaluation,
+                Event::Evaluated {
+                    result: Box::new(result(&account()))
+                },
+                gate.generation()
+            ),
+            &ValidatedAccount::bundled(account(), SampleId::SynWelcome).unwrap()
+        )
+        .unwrap()
+    );
     let export = gate_request(
         gate,
         "export-after-abort",
@@ -2050,7 +2185,7 @@ fn assert_old_account_usable(gate: &mut SessionGate) {
 #[test]
 fn confirmed_reset_abort_restores_usability_without_rolling_back_the_reset_epoch() {
     let old = durable_account();
-    let mut machine = CommitMachine::new(context().epochs, true, old.clone()).unwrap();
+    let mut machine = CommitMachine::new(context().epochs, true, observed(old.clone())).unwrap();
     let mut gate = SessionGate::new(context(), Counter(0));
     let import = gate_request(
         &gate,
@@ -2063,7 +2198,7 @@ fn confirmed_reset_abort_restores_usability_without_rolling_back_the_reset_epoch
     );
     gate.register(&import).unwrap();
     gate.reset_barrier().unwrap();
-    let candidate = gate.begin_reset_save(&mut machine).unwrap();
+    let candidate = reserve_reset(&mut gate, &mut machine).unwrap();
     assert_eq!(candidate.revision, Counter(11));
     assert_eq!(candidate.backup, None);
     assert_foreground_blocked(&mut gate);
@@ -2091,20 +2226,15 @@ fn confirmed_reset_abort_restores_usability_without_rolling_back_the_reset_epoch
 #[test]
 fn uncertain_reset_storage_stays_blocked_until_a_settled_read_proves_abort() {
     let old = durable_account();
-    let mut machine = CommitMachine::new(context().epochs, true, old.clone()).unwrap();
+    let mut machine = CommitMachine::new(context().epochs, true, observed(old.clone())).unwrap();
     let mut gate = SessionGate::new(context(), Counter(0));
     gate.reset_barrier().unwrap();
-    gate.begin_reset_save(&mut machine).unwrap();
+    reserve_reset(&mut gate, &mut machine).unwrap();
     assert_foreground_blocked(&mut gate);
     assert!(gate.restart_worker(&machine).is_err());
     assert!(
         machine
-            .recover(
-                gate.context().epochs.clone(),
-                RecoveryState::Durable {
-                    record: Box::new(old.clone())
-                }
-            )
+            .bootstrap(gate.context().epochs.clone(), observed(old.clone()))
             .is_err()
     );
     let mut unrelated = old.clone();
@@ -2123,16 +2253,17 @@ fn uncertain_reset_storage_stays_blocked_until_a_settled_read_proves_abort() {
 fn committed_reset_survives_lost_acknowledgement_and_restart_without_another_clear() {
     for callback_received in [false, true] {
         let old = durable_account();
-        let mut machine = CommitMachine::new(context().epochs, true, old.clone()).unwrap();
+        let mut machine =
+            CommitMachine::new(context().epochs, true, observed(old.clone())).unwrap();
         let mut gate = SessionGate::new(context(), Counter(0));
         gate.reset_barrier().unwrap();
-        let tombstone = gate.begin_reset_save(&mut machine).unwrap();
+        let tombstone = reserve_reset(&mut gate, &mut machine).unwrap();
         let committed = receipt(&tombstone, &gate.context().epochs);
         if callback_received {
             gate.storage_committed(&mut machine, &committed).unwrap();
         } else {
             assert!(gate.restart_worker(&machine).is_err());
-            gate.settle_storage(&mut machine, tombstone.clone())
+            gate.settle_storage(&mut machine, tombstone.as_ref().clone())
                 .unwrap();
         }
         assert_eq!(machine.active(), old.backup.as_ref());
@@ -2150,36 +2281,29 @@ fn committed_reset_survives_lost_acknowledgement_and_restart_without_another_cle
         )));
         assert_foreground_blocked(&mut gate);
         assert!(gate.reset_barrier().is_err());
-        assert!(gate.begin_reset_save(&mut machine).is_err());
-        for state in [
-            RecoveryState::Durable {
-                record: Box::new(old),
-            },
-            RecoveryState::SessionOnly { backup: None },
-        ] {
+        assert!(gate.propose_reset_save(&mut machine).is_err());
+        for input in [observed(old), unread()] {
             assert!(
                 gate.register(&gate_request(
                     &gate,
                     "resurrect",
-                    Request::Recover { state }
+                    Request::Bootstrap { input }
                 ))
                 .is_err()
             );
         }
-        let state = RecoveryState::Durable {
-            record: Box::new(tombstone.clone()),
-        };
+        let input = observed(tombstone.clone());
         let recovery = gate_request(
             &gate,
             "recover-tombstone",
-            Request::Recover {
-                state: state.clone(),
+            Request::Bootstrap {
+                input: input.clone(),
             },
         );
         gate.register(&recovery).unwrap();
         assert_foreground_blocked(&mut gate);
         machine
-            .recover(gate.context().epochs.clone(), state)
+            .bootstrap(gate.context().epochs.clone(), input)
             .unwrap();
         assert!(gate.accept(&reply(
             &recovery,
@@ -2189,7 +2313,7 @@ fn committed_reset_survives_lost_acknowledgement_and_restart_without_another_cle
             Counter(1)
         )));
         assert_eq!(machine.active(), None);
-        assert_eq!(machine.durable(), Some(&tombstone));
+        assert_eq!(machine.durable(), Some(tombstone.as_ref()));
         assert_eq!(gate.context().account_semantics, None);
         assert_eq!(gate.context().epochs.reset, Counter(1));
         assert_eq!(gate.generation(), Counter(1));
@@ -2209,8 +2333,8 @@ fn committed_reset_survives_lost_acknowledgement_and_restart_without_another_cle
 fn unavailable_idb_allows_initial_session_activation_restart_and_explicit_memory_discard() {
     let mut c = context();
     c.account_semantics = None;
-    let mut machine = CommitMachine::session_only(c.epochs.clone(), true).unwrap();
-    assert!(CommitMachine::session_only(c.epochs.clone(), false).is_err());
+    let mut machine = CommitMachine::new(c.epochs.clone(), true, unread()).unwrap();
+    assert!(CommitMachine::new(c.epochs.clone(), false, unread()).is_err());
     assert_eq!(machine.durable(), None);
     let mut gate = SessionGate::new(c.clone(), Counter(0));
     let trusted = ValidatedAccount::imported(account()).unwrap();
@@ -2221,7 +2345,7 @@ fn unavailable_idb_allows_initial_session_activation_restart_and_explicit_memory
         "import",
         Request::PrepareImport {
             input: ImportInput::Restore {
-                backup: Box::new(p.backup.clone()),
+                backup: p.backup.clone(),
             },
         },
     );
@@ -2236,7 +2360,9 @@ fn unavailable_idb_allows_initial_session_activation_restart_and_explicit_memory
     machine
         .prepare(Some(p.backup.clone()), &gate.context().epochs)
         .unwrap();
-    assert!(machine.begin_save(&gate.context().epochs).is_err());
+    assert!(reserve(&mut machine, &gate.context().epochs).is_err());
+    gate.promote_prepared_session(&mut machine, &p.token)
+        .unwrap();
     let activation = gate_request(
         &gate,
         "activate-session",
@@ -2252,40 +2378,41 @@ fn unavailable_idb_allows_initial_session_activation_restart_and_explicit_memory
         previous_generation,
         capability: p.capability.clone(),
     };
-    machine.activate_session_only().unwrap();
     assert!(gate.accept(&reply(&activation, activated(Counter(0)), Counter(1))));
+    machine.acknowledge_session_activation().unwrap();
     assert_eq!(machine.active(), Some(&p.backup));
     assert_eq!(machine.durable(), None);
     gate.restart_worker(&machine).unwrap();
-    let state = RecoveryState::SessionOnly {
-        backup: Some(Box::new(p.backup.clone())),
+    let input = RecoveryInput {
+        storage: unread().storage,
+        active: ActiveSelection::RetainedSession {
+            backup: p.backup.clone(),
+        },
     };
-    assert_eq!(machine.recovery_state(), state);
-    let invented = RecoveryState::Durable {
-        record: Box::new(durable_account()),
-    };
+    assert_eq!(machine.recovery_input(), input);
+    let invented = observed(durable_account());
     assert!(
         gate.register(&gate_request(
             &gate,
             "invented-read",
-            Request::Recover { state: invented }
+            Request::Bootstrap { input: invented }
         ))
         .is_err()
     );
     let recover = gate_request(
         &gate,
         "recover-session",
-        Request::Recover {
-            state: state.clone(),
+        Request::Bootstrap {
+            input: input.clone(),
         },
     );
     gate.register(&recover).unwrap();
     machine
-        .recover(gate.context().epochs.clone(), state)
+        .bootstrap(gate.context().epochs.clone(), input)
         .unwrap();
     assert!(gate.accept(&reply(&recover, activated(Counter(1)), Counter(2))));
     gate.reset_barrier().unwrap();
-    assert!(gate.begin_reset_save(&mut machine).is_err());
+    assert!(gate.propose_reset_save(&mut machine).is_err());
     gate.abort_reset_before_save(&mut machine).unwrap();
     assert_eq!(machine.active(), Some(&p.backup));
     assert_eq!(gate.context().epochs.reset, Counter(1));
@@ -2304,12 +2431,12 @@ fn unavailable_idb_allows_initial_session_activation_restart_and_explicit_memory
     )));
     assert_eq!(gate.context().account_semantics, None);
     gate.restart_worker(&machine).unwrap();
-    let state = RecoveryState::SessionOnly { backup: None };
+    let input = unread();
     let recover = gate_request(
         &gate,
         "recover-empty-session",
-        Request::Recover {
-            state: state.clone(),
+        Request::Bootstrap {
+            input: input.clone(),
         },
     );
     gate.register(&recover).unwrap();
@@ -2321,7 +2448,7 @@ fn unavailable_idb_allows_initial_session_activation_restart_and_explicit_memory
         Counter(4)
     )));
     machine
-        .recover(gate.context().epochs.clone(), state)
+        .bootstrap(gate.context().epochs.clone(), input)
         .unwrap();
     assert!(gate.accept(&reply(
         &recover,
@@ -2332,6 +2459,14 @@ fn unavailable_idb_allows_initial_session_activation_restart_and_explicit_memory
     )));
     assert_eq!(machine.durable(), None);
     assert_eq!(machine.active(), None);
-    let mut durable = CommitMachine::new(context().epochs, true, durable_account()).unwrap();
-    assert!(durable.discard_session(context().epochs).is_err());
+    let old = durable_account();
+    let mut durable = CommitMachine::new(context().epochs, true, observed(old.clone())).unwrap();
+    let mut discarded_epochs = context().epochs;
+    discarded_epochs.reset = Counter(1);
+    durable.discard_session(discarded_epochs).unwrap();
+    assert_eq!(durable.active(), None);
+    assert_eq!(
+        durable.durable_head().unwrap(),
+        Some(DurableHead::from_record(&old).unwrap())
+    );
 }

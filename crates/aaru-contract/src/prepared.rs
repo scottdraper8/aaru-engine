@@ -1,6 +1,6 @@
 use crate::*;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, sync::Arc};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -11,7 +11,7 @@ pub struct SampleBinding {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Backup {
-    pub account: AccountSnapshot,
+    pub account: Arc<AccountSnapshot>,
     pub sample: Option<SampleBinding>,
 }
 fn inventory_digest(account: &AccountSnapshot) -> ContractResult<Digest> {
@@ -22,7 +22,7 @@ fn inventory_digest(account: &AccountSnapshot) -> ContractResult<Digest> {
 impl Backup {
     pub fn from_validated(account: &ValidatedAccount) -> ContractResult<Self> {
         Ok(Self {
-            account: account.snapshot().clone(),
+            account: account.shared_snapshot(),
             sample: account
                 .sample()
                 .map(|id| {
@@ -41,7 +41,7 @@ impl Backup {
                 let reference = bundled.ok_or_else(|| {
                     failure(
                         IssueCode::SyntheticOnImportedAccount,
-                        "sample restoration needs the trusted bundled reference",
+                        "sample restoration needs a fresh trusted bundled reference",
                     )
                 })?;
                 if reference.sample() != Some(binding.id)
@@ -66,7 +66,7 @@ impl Backup {
 #[serde(deny_unknown_fields)]
 pub struct DurableRecord {
     pub revision: Counter,
-    pub backup: Option<Backup>,
+    pub backup: Option<Arc<Backup>>,
 }
 impl DurableRecord {
     pub fn digest(&self) -> ContractResult<Digest> {
@@ -90,66 +90,164 @@ pub enum CommitPhase {
     Prepared,
     Writing,
     Committed,
+    ActivatingSession,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
-pub enum RecoveryState {
-    Durable { record: Box<DurableRecord> },
-    SessionOnly { backup: Option<Box<Backup>> },
+pub enum StorageObservation {
+    Readable {
+        record: Arc<DurableRecord>,
+    },
+    RetainedHead {
+        head: transport::DurableHead,
+    },
+    Corrupt {
+        head: transport::DurableHead,
+    },
+    Unreadable {
+        last_known_head: Option<transport::DurableHead>,
+    },
+    Unavailable {
+        last_observed_head: Option<transport::DurableHead>,
+    },
 }
-#[derive(Debug)]
-enum StorageCandidate {
-    Durable(DurableRecord),
-    SessionOnly(Backup),
+impl StorageObservation {
+    pub fn head(&self) -> ContractResult<Option<transport::DurableHead>> {
+        match self {
+            Self::Readable { record } => transport::DurableHead::from_record(record).map(Some),
+            Self::RetainedHead { head } => Ok(Some(head.clone())),
+            Self::Corrupt { head } => Ok(Some(head.clone())),
+            Self::Unreadable { last_known_head } => Ok(last_known_head.clone()),
+            Self::Unavailable { last_observed_head } => Ok(last_observed_head.clone()),
+        }
+    }
+    pub fn head_observation(&self) -> ContractResult<transport::HeadObservation> {
+        Ok(match self {
+            Self::Readable { .. } | Self::RetainedHead { .. } => {
+                transport::HeadObservation::Readable {
+                    head: self
+                        .head()?
+                        .ok_or_else(|| failure(IssueCode::StorageFailure, "missing head"))?,
+                }
+            }
+            Self::Corrupt { head } => transport::HeadObservation::Corrupt {
+                readable_head: head.clone(),
+            },
+            Self::Unreadable { last_known_head } => transport::HeadObservation::Unreadable {
+                last_known_head: last_known_head.clone(),
+            },
+            Self::Unavailable { last_observed_head } => transport::HeadObservation::Unavailable {
+                last_readable: last_observed_head.clone(),
+            },
+        })
+    }
+    fn compact(self) -> ContractResult<Self> {
+        match self {
+            Self::Readable { record } => Ok(Self::RetainedHead {
+                head: transport::DurableHead::from_record(&record)?,
+            }),
+            other => Ok(other),
+        }
+    }
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ActiveSelection {
+    ObservedDurable,
+    EmptySession,
+    RetainedSession { backup: Arc<Backup> },
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecoveryInput {
+    pub storage: StorageObservation,
+    pub active: ActiveSelection,
+}
+impl RecoveryInput {
+    pub fn selected_backup(&self) -> ContractResult<Option<&Arc<Backup>>> {
+        match &self.active {
+            ActiveSelection::ObservedDurable => match &self.storage {
+                StorageObservation::Readable { record } => Ok(record.backup.as_ref()),
+                _ => Err(failure(
+                    IssueCode::StorageFailure,
+                    "unread storage is not an empty durable record",
+                )),
+            },
+            ActiveSelection::EmptySession => Ok(None),
+            ActiveSelection::RetainedSession { backup } => Ok(Some(backup)),
+        }
+    }
+    pub fn restore(
+        &self,
+        bundled: Option<&ValidatedAccount>,
+    ) -> ContractResult<Option<ValidatedAccount>> {
+        self.selected_backup()?
+            .map(|b| b.restore(bundled))
+            .transpose()
+    }
 }
 #[derive(Debug)]
 pub struct CommitMachine {
     epochs: Epochs,
-    durable: Option<DurableRecord>,
-    active: Option<Backup>,
-    candidate: Option<StorageCandidate>,
+    storage: StorageObservation,
+    active: Option<Arc<Backup>>,
+    session_selected: bool,
+    candidate: Option<Arc<DurableRecord>>,
+    session_candidate: Option<Arc<Backup>>,
     phase: CommitPhase,
 }
 impl CommitMachine {
-    pub fn new(epochs: Epochs, primary: bool, durable: DurableRecord) -> ContractResult<Self> {
+    pub fn new(epochs: Epochs, primary: bool, input: RecoveryInput) -> ContractResult<Self> {
         if !primary {
             return Err(failure(
                 IssueCode::StaleAuthority,
-                "secondary tabs cannot open private account state",
+                "private state requires primary ownership",
             ));
         }
-        durable.digest()?;
-        Ok(Self {
-            epochs,
-            active: durable.backup.clone(),
-            durable: Some(durable),
-            candidate: None,
-            phase: CommitPhase::Idle,
-        })
-    }
-    pub fn session_only(epochs: Epochs, primary: bool) -> ContractResult<Self> {
-        if !primary {
+        if matches!(
+            input.storage,
+            StorageObservation::Corrupt { .. } | StorageObservation::Unreadable { .. }
+        ) && matches!(input.active, ActiveSelection::ObservedDurable)
+        {
             return Err(failure(
-                IssueCode::StaleAuthority,
-                "session-only state requires primary ownership",
+                IssueCode::StorageFailure,
+                "corrupt storage needs explicit memory selection or privacy clear",
             ));
+        }
+        let active = input.selected_backup()?.cloned();
+        if let StorageObservation::Readable { record } = &input.storage {
+            record.digest()?;
+        }
+        if let Some(backup) = &active {
+            backup.digest()?;
         }
         Ok(Self {
             epochs,
-            durable: None,
-            active: None,
+            storage: if matches!(input.active, ActiveSelection::ObservedDurable) {
+                input.storage
+            } else {
+                input.storage.compact()?
+            },
+            active,
+            session_selected: !matches!(input.active, ActiveSelection::ObservedDurable),
             candidate: None,
+            session_candidate: None,
             phase: CommitPhase::Idle,
         })
     }
-    pub fn recovery_state(&self) -> RecoveryState {
-        match &self.durable {
-            Some(record) => RecoveryState::Durable {
-                record: Box::new(record.clone()),
-            },
-            None => RecoveryState::SessionOnly {
-                backup: self.active.clone().map(Box::new),
-            },
+    pub fn recovery_input(&self) -> RecoveryInput {
+        let active = if self.phase == CommitPhase::Committed || !self.session_selected {
+            ActiveSelection::ObservedDurable
+        } else {
+            self.active
+                .clone()
+                .map_or(ActiveSelection::EmptySession, |backup| {
+                    ActiveSelection::RetainedSession { backup }
+                })
+        };
+        RecoveryInput {
+            storage: self.storage.clone(),
+            active,
         }
     }
     pub fn epochs(&self) -> &Epochs {
@@ -158,103 +256,143 @@ impl CommitMachine {
     pub fn phase(&self) -> &CommitPhase {
         &self.phase
     }
-    pub fn active(&self) -> Option<&Backup> {
+    pub fn active(&self) -> Option<&Arc<Backup>> {
         self.active.as_ref()
     }
     pub fn durable(&self) -> Option<&DurableRecord> {
-        self.durable.as_ref()
+        match &self.storage {
+            StorageObservation::Readable { record } => Some(record),
+            _ => None,
+        }
     }
-    pub fn prepare(&mut self, backup: Option<Backup>, epochs: &Epochs) -> ContractResult<()> {
+    pub fn durable_head(&self) -> ContractResult<Option<transport::DurableHead>> {
+        self.storage.head()
+    }
+    pub fn refresh_storage(
+        &mut self,
+        epochs: &Epochs,
+        observation: StorageObservation,
+    ) -> ContractResult<()> {
+        if epochs != &self.epochs || self.phase != CommitPhase::Idle {
+            return Err(failure(
+                IssueCode::StaleAuthority,
+                "refresh requires settled idle storage",
+            ));
+        }
+        self.storage
+            .head_observation()?
+            .validate_refresh(&observation.head_observation()?)?;
+        if let StorageObservation::Readable { record } = &observation {
+            record.digest()?;
+        }
+        self.storage = observation.compact()?;
+        self.session_selected = true;
+        Ok(())
+    }
+    pub fn prepare(&mut self, backup: Option<Arc<Backup>>, epochs: &Epochs) -> ContractResult<()> {
         if epochs != &self.epochs
-            || self.phase == CommitPhase::Writing
-            || self.phase == CommitPhase::Committed
+            || !matches!(self.phase, CommitPhase::Idle | CommitPhase::Prepared)
         {
             return Err(failure(
                 IssueCode::StaleAuthority,
-                "write transition blocks preparation",
+                "settle write or activation before preparation",
             ));
         }
         if let Some(b) = &backup {
             b.digest()?;
         }
-        self.candidate = Some(match &self.durable {
-            Some(durable) => StorageCandidate::Durable(DurableRecord {
-                revision: durable.revision.next().ok_or_else(|| {
-                    failure(IssueCode::ResourceLimit, "storage revision exhausted")
-                })?,
-                backup,
-            }),
-            None => StorageCandidate::SessionOnly(backup.ok_or_else(|| {
-                failure(
-                    IssueCode::StorageFailure,
-                    "unavailable storage cannot commit a clear-local-data tombstone",
-                )
-            })?),
-        });
+        self.candidate = None;
+        self.session_candidate = backup;
         self.phase = CommitPhase::Prepared;
         Ok(())
     }
     pub fn invalidate_prepared(&mut self, epochs: Epochs) -> ContractResult<()> {
-        if matches!(self.phase, CommitPhase::Writing | CommitPhase::Committed)
+        if !matches!(self.phase, CommitPhase::Idle | CommitPhase::Prepared)
             || !epochs.succeeds(&self.epochs)
         {
             return Err(failure(
                 IssueCode::StaleAuthority,
-                "settle committed or in-flight storage before changing epochs",
+                "settle write or activation before changing epochs",
             ));
         }
         self.epochs = epochs;
         self.candidate = None;
+        self.session_candidate = None;
         self.phase = CommitPhase::Idle;
         Ok(())
     }
-    pub fn begin_save(&mut self, epochs: &Epochs) -> ContractResult<&DurableRecord> {
-        if epochs != &self.epochs || self.phase != CommitPhase::Prepared {
-            return Err(failure(
-                IssueCode::StaleAuthority,
-                "no authorized prepared save",
-            ));
+    pub fn proposed_record(&mut self) -> ContractResult<Arc<DurableRecord>> {
+        if self.phase != CommitPhase::Prepared {
+            return Err(failure(IssueCode::StalePrepared, "no prepared record"));
         }
-        let Some(StorageCandidate::Durable(record)) = &self.candidate else {
+        if let Some(candidate) = &self.candidate {
+            return Ok(candidate.clone());
+        }
+        let transport::HeadObservation::Readable { head } = self.storage.head_observation()? else {
             return Err(failure(
                 IssueCode::StorageFailure,
-                "session-only preparation cannot be saved without a durable read",
+                "save requires a readable durable observation",
             ));
         };
+        let candidate = Arc::new(DurableRecord {
+            revision: head
+                .revision
+                .next()
+                .ok_or_else(|| failure(IssueCode::ResourceLimit, "storage revision exhausted"))?,
+            backup: self.session_candidate.clone(),
+        });
+        self.candidate = Some(candidate.clone());
+        Ok(candidate)
+    }
+    pub fn reserve_save(
+        &mut self,
+        epochs: &Epochs,
+        expected: &transport::DurableHead,
+    ) -> ContractResult<Arc<DurableRecord>> {
+        if epochs != &self.epochs
+            || self.phase != CommitPhase::Prepared
+            || self.storage.head_observation()?
+                != (transport::HeadObservation::Readable {
+                    head: expected.clone(),
+                })
+        {
+            return Err(failure(
+                IssueCode::StaleAuthority,
+                "storage reservation no longer matches the prepared read",
+            ));
+        }
+        let candidate = self.proposed_record()?;
         self.phase = CommitPhase::Writing;
-        Ok(record)
+        Ok(candidate)
     }
     pub fn storage_failed(&mut self, epochs: &Epochs) -> ContractResult<()> {
         if epochs != &self.epochs || self.phase != CommitPhase::Writing {
-            return Err(failure(IssueCode::StaleAuthority, "stale storage failure"));
+            return Err(failure(IssueCode::StaleAuthority, "stale abort callback"));
         }
         self.phase = CommitPhase::Prepared;
         Ok(())
     }
     pub fn storage_committed(&mut self, receipt: &CommitReceipt) -> ContractResult<()> {
         if receipt.epochs != self.epochs || self.phase != CommitPhase::Writing {
-            return Err(failure(IssueCode::StaleAuthority, "stale commit callback"));
-        }
-        let Some(StorageCandidate::Durable(candidate)) = &self.candidate else {
             return Err(failure(
-                IssueCode::StalePrepared,
-                "missing durable candidate",
+                IssueCode::StaleAuthority,
+                "stale complete callback",
             ));
-        };
-        let backup_digest = match &candidate.backup {
-            Some(b) => b.digest()?,
-            None => Digest::of(b"aaru-reset-v1"),
-        };
-        if candidate.revision != receipt.revision
-            || candidate.digest()? != receipt.record_digest
-            || backup_digest != receipt.backup_digest
-        {
+        }
+        let candidate = self
+            .candidate
+            .as_ref()
+            .ok_or_else(|| failure(IssueCode::StalePrepared, "missing candidate"))?;
+        let head = transport::DurableHead::from_record(candidate)?;
+        if head.receipt(self.epochs.clone()) != *receipt {
             return Err(failure(
                 IssueCode::StorageFailure,
-                "commit receipt differs from candidate",
+                "receipt differs from candidate",
             ));
         }
-        self.durable = Some(candidate.clone());
+        self.storage = StorageObservation::Readable {
+            record: candidate.clone(),
+        };
         self.phase = CommitPhase::Committed;
         Ok(())
     }
@@ -262,34 +400,44 @@ impl CommitMachine {
         if self.phase != CommitPhase::Committed {
             return Err(failure(
                 IssueCode::StorageFailure,
-                "durable commit has not completed",
+                "transaction has not completed",
             ));
         }
-        self.active = self.durable.as_ref().and_then(|r| r.backup.clone());
+        self.active = self.durable().and_then(|r| r.backup.clone());
+        self.session_selected = false;
         self.candidate = None;
+        self.session_candidate = None;
         self.phase = CommitPhase::Idle;
         Ok(())
     }
-    pub fn activate_session_only(&mut self) -> ContractResult<()> {
+    pub fn promote_session_only(&mut self) -> ContractResult<()> {
         if self.phase != CommitPhase::Prepared {
             return Err(failure(
                 IssueCode::StorageFailure,
-                "session activation requires an uncommitted candidate",
+                "session promotion requires an uncommitted candidate",
             ));
         }
-        let backup = match &self.candidate {
-            Some(StorageCandidate::Durable(record)) => record.backup.as_ref(),
-            Some(StorageCandidate::SessionOnly(backup)) => Some(backup),
-            None => None,
-        }
-        .ok_or_else(|| {
+        let active = self.session_candidate.clone().ok_or_else(|| {
             failure(
                 IssueCode::StorageFailure,
-                "clear local data requires a durable tombstone",
+                "memory discard is not durable erasure",
             )
         })?;
-        self.active = Some(backup.clone());
+        self.storage = self.storage.clone().compact()?;
+        self.active = Some(active);
+        self.session_selected = true;
         self.candidate = None;
+        self.session_candidate = None;
+        self.phase = CommitPhase::ActivatingSession;
+        Ok(())
+    }
+    pub fn acknowledge_session_activation(&mut self) -> ContractResult<()> {
+        if self.phase != CommitPhase::ActivatingSession {
+            return Err(failure(
+                IssueCode::StaleAuthority,
+                "no pending memory activation",
+            ));
+        }
         self.phase = CommitPhase::Idle;
         Ok(())
     }
@@ -301,78 +449,126 @@ impl CommitMachine {
         if epochs != &self.epochs || self.phase != CommitPhase::Writing {
             return Err(failure(
                 IssueCode::StaleAuthority,
-                "no unsettled storage transaction",
+                "no unsettled transaction",
             ));
         }
-        let Some(StorageCandidate::Durable(candidate)) = &self.candidate else {
-            return Err(failure(
-                IssueCode::StorageFailure,
-                "missing durable candidate",
-            ));
-        };
-        if self.durable.as_ref() == Some(&observed) {
+        if self.durable_head()?.as_ref() == Some(&transport::DurableHead::from_record(&observed)?) {
             self.phase = CommitPhase::Prepared;
-        } else if candidate == &observed {
-            self.durable = Some(observed);
+        } else if self.candidate.as_deref() == Some(&observed) {
+            self.storage = StorageObservation::Readable {
+                record: Arc::new(observed),
+            };
             self.phase = CommitPhase::Committed;
         } else {
             return Err(failure(
                 IssueCode::StorageFailure,
-                "settled read is neither prior record nor complete candidate",
+                "settlement is neither prior record nor candidate",
             ));
         }
         Ok(())
     }
     pub fn discard_session(&mut self, epochs: Epochs) -> ContractResult<()> {
-        if self.durable.is_some() {
+        if self.epochs.reset.next() != Some(epochs.reset) || self.epochs.worker != epochs.worker {
             return Err(failure(
-                IssueCode::StorageFailure,
-                "discard session cannot clear durable local data",
+                IssueCode::StaleAuthority,
+                "memory discard requires the next reset authority",
             ));
         }
         self.invalidate_prepared(epochs)?;
         self.active = None;
+        self.session_selected = true;
+        self.storage = self.storage.clone().compact()?;
         Ok(())
     }
-    pub fn recover(&mut self, epochs: Epochs, observed: RecoveryState) -> ContractResult<()> {
+    pub fn apply_privacy_clear(
+        &mut self,
+        clear: &transport::PrivacyClearMachine,
+    ) -> ContractResult<()> {
+        let epochs = &clear.authority().epochs;
+        if !epochs.succeeds(&self.epochs)
+            || epochs.reset <= self.epochs.reset
+            || matches!(
+                self.phase,
+                CommitPhase::Writing | CommitPhase::Committed | CommitPhase::ActivatingSession
+            )
+        {
+            return Err(failure(
+                IssueCode::StaleAuthority,
+                "privacy clear requires an advanced reset and settled prior storage",
+            ));
+        }
+        let input = clear.cleared_bootstrap()?;
+        self.epochs = epochs.clone();
+        self.storage = input.storage;
+        self.active = None;
+        self.session_selected = false;
+        self.candidate = None;
+        self.session_candidate = None;
+        self.phase = CommitPhase::Committed;
+        Ok(())
+    }
+    pub fn bootstrap(&mut self, epochs: Epochs, input: RecoveryInput) -> ContractResult<()> {
         if !epochs.succeeds(&self.epochs) || self.phase == CommitPhase::Writing {
             return Err(failure(
                 IssueCode::StaleAuthority,
-                "settle storage before recovery",
+                "settle storage before bootstrap",
             ));
         }
-        let (durable, active) = match observed {
-            RecoveryState::Durable { record } => {
-                record.digest()?;
-                if self.durable.as_ref().is_some_and(|old| {
-                    record.revision < old.revision
-                        || (record.revision == old.revision && record.as_ref() != old)
-                }) {
+        if let StorageObservation::Readable { record } = &input.storage {
+            record.digest()?;
+            let old = self.storage.head()?;
+            if let Some(old) = old {
+                let next = transport::DurableHead::from_record(record)?;
+                if next.revision < old.revision || (next.revision == old.revision && next != old) {
                     return Err(failure(
                         IssueCode::StorageFailure,
-                        "storage revision or recovery authority is inconsistent",
+                        "regressed or inconsistent ordinary recovery",
                     ));
                 }
-                let active = record.backup.clone();
-                (Some(*record), active)
             }
-            RecoveryState::SessionOnly { backup } => {
-                if self.durable.is_some() {
-                    return Err(failure(
-                        IssueCode::StorageFailure,
-                        "known durable state requires durable recovery",
-                    ));
-                }
-                if let Some(backup) = &backup {
-                    backup.digest()?;
-                }
-                (None, backup.map(|b| *b))
-            }
-        };
+        } else if input.storage != self.storage {
+            return Err(failure(
+                IssueCode::StorageFailure,
+                "unread observation cannot replace known state",
+            ));
+        }
+        if self.phase == CommitPhase::Committed && input != self.recovery_input() {
+            return Err(failure(
+                IssueCode::StorageFailure,
+                "committed storage controls recovery",
+            ));
+        }
+        if let ActiveSelection::RetainedSession { backup } = &input.active
+            && (!self.session_selected || self.active.as_ref() != Some(backup))
+        {
+            return Err(failure(
+                IssueCode::StaleAuthority,
+                "retained session must be the intended memory anchor",
+            ));
+        }
+        if input.active != self.recovery_input().active
+            || (self.phase != CommitPhase::Committed
+                && input.selected_backup()? != self.active.as_ref())
+        {
+            return Err(failure(
+                IssueCode::StaleAuthority,
+                "ordinary restart cannot change the intended active selection",
+            ));
+        }
+        let active = input.selected_backup()?.cloned();
+        if let Some(b) = &active {
+            b.digest()?;
+        }
         self.epochs = epochs;
-        self.durable = durable;
+        self.storage = if matches!(input.active, ActiveSelection::ObservedDurable) {
+            input.storage
+        } else {
+            input.storage.compact()?
+        };
         self.active = active;
+        self.session_selected = !matches!(input.active, ActiveSelection::ObservedDurable);
         self.candidate = None;
+        self.session_candidate = None;
         self.phase = CommitPhase::Idle;
         Ok(())
     }
@@ -383,10 +579,18 @@ fn failure(code: IssueCode, message: &str) -> ContractError {
 
 #[derive(Debug, Default)]
 pub struct PreparedRegistry {
-    pending: Option<(ImportPreview, ValidatedAccount)>,
+    pending: Option<(PreparedCommitment, ValidatedAccount)>,
     activated: Option<(PreparedToken, RequestContext, StorageDisposition, Counter)>,
     active: Option<ValidatedAccount>,
     issued: BTreeSet<PreparedToken>,
+}
+#[derive(Debug)]
+struct PreparedCommitment {
+    token: PreparedToken,
+    context: RequestContext,
+    replaces_generation: Counter,
+    backup: Arc<Backup>,
+    digest: Digest,
 }
 impl PreparedRegistry {
     pub fn prepare(
@@ -397,7 +601,7 @@ impl PreparedRegistry {
         validated: ValidatedAccount,
     ) -> ContractResult<()> {
         if preview.context != *context || preview.replaces_generation != current {
-            return Err(failure(IssueCode::StaleAuthority, "stale preview context"));
+            return Err(failure(IssueCode::StaleAuthority, "stale preview"));
         }
         if preview.issues.len() > MAX_DIAGNOSTICS
             || self.issued.len() >= 4096
@@ -405,10 +609,10 @@ impl PreparedRegistry {
         {
             return Err(failure(
                 IssueCode::ResourceLimit,
-                "prepared candidate budget or repeated token",
+                "candidate budget or reused token",
             ));
         }
-        if preview.backup != Backup::from_validated(&validated)?
+        if *preview.backup != Backup::from_validated(&validated)?
             || preview.backup.digest()? != preview.canonical_digest
         {
             return Err(failure(
@@ -417,7 +621,16 @@ impl PreparedRegistry {
             ));
         }
         self.issued.insert(preview.token.clone());
-        self.pending = Some((preview.clone(), validated));
+        self.pending = Some((
+            PreparedCommitment {
+                token: preview.token.clone(),
+                context: context.clone(),
+                replaces_generation: current,
+                backup: preview.backup.clone(),
+                digest: preview.canonical_digest.clone(),
+            },
+            validated,
+        ));
         Ok(())
     }
     pub fn activate(
@@ -438,25 +651,26 @@ impl PreparedRegistry {
         let (preview, _) = self
             .pending
             .as_ref()
-            .ok_or_else(|| failure(IssueCode::StalePrepared, "no prepared candidate"))?;
+            .ok_or_else(|| failure(IssueCode::StalePrepared, "no candidate"))?;
         if &preview.token != token
             || preview.replaces_generation != current
             || &preview.context != context
         {
-            return Err(failure(IssueCode::StalePrepared, "stale token or context"));
+            return Err(failure(IssueCode::StalePrepared, "stale candidate"));
         }
         if let StorageDisposition::Persisted { receipt } = storage {
             let record = DurableRecord {
                 revision: receipt.revision,
                 backup: Some(preview.backup.clone()),
             };
-            if receipt.epochs != context.epochs
-                || receipt.backup_digest != preview.canonical_digest
+            if receipt.revision == Counter(0)
+                || receipt.epochs != context.epochs
+                || receipt.backup_digest != preview.digest
                 || receipt.record_digest != record.digest()?
             {
                 return Err(failure(
                     IssueCode::StorageFailure,
-                    "receipt is not bound to prepared account/source/preferences",
+                    "receipt differs from prepared state",
                 ));
             }
         }

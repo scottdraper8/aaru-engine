@@ -49,6 +49,6 @@ impl SensitivityResult {
                 }
             }
         }
-        Ok(())
+        wire::encode(self).map(|_| ())
     }
 }

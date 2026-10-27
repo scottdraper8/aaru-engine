@@ -26,7 +26,26 @@ impl SampleId {
 pub enum Completeness {
     Unspecified,
     DeclaredPartial,
-    DeclaredComplete,
+    DeclaredComplete { asserted_by: CompletenessAuthority },
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum CompletenessAuthority {
+    User { statement: String },
+    Exporter { name: String, source: SourceRef },
+}
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InventorySection {
+    Characters,
+    Weapons,
+    Artifacts,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ImportDeclaration {
+    pub section: InventorySection,
+    pub completeness: Completeness,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "coverage", rename_all = "snake_case", deny_unknown_fields)]
@@ -46,6 +65,26 @@ impl<T> Section<T> {
     }
     pub fn is_supplied(&self) -> bool {
         matches!(self, Self::Supplied { .. })
+    }
+    pub fn is_declared_complete(&self) -> bool {
+        matches!(
+            self,
+            Self::Supplied {
+                completeness: Completeness::DeclaredComplete { .. },
+                ..
+            }
+        )
+    }
+    fn declare(&mut self, value: Completeness) -> ContractResult<()> {
+        let Self::Supplied { completeness, .. } = self else {
+            return Err(ContractError::new(
+                IssueCode::MissingSection,
+                "/declarations",
+                "an omitted section cannot be declared empty or complete",
+            ));
+        };
+        *completeness = value;
+        Ok(())
     }
 }
 
@@ -239,23 +278,28 @@ pub struct AccountSnapshot {
     pub weapons: Section<WeaponInstance>,
     pub artifacts: Section<ArtifactInstance>,
     pub preferences: AllocationPreferences,
-    pub source_archive: Option<SourceArchive>,
+    pub source_archive: Option<std::sync::Arc<SourceArchive>>,
     pub provenance: Vec<Provenance>,
 }
 #[derive(Debug, Clone)]
 pub struct ValidatedAccount {
-    snapshot: AccountSnapshot,
+    snapshot: std::sync::Arc<AccountSnapshot>,
     sample: Option<SampleId>,
 }
 impl ValidatedAccount {
-    pub fn imported(snapshot: AccountSnapshot) -> ContractResult<Self> {
+    pub fn imported(snapshot: impl Into<std::sync::Arc<AccountSnapshot>>) -> ContractResult<Self> {
+        let snapshot = snapshot.into();
         snapshot.validate()?;
         Ok(Self {
             snapshot,
             sample: None,
         })
     }
-    pub fn bundled(snapshot: AccountSnapshot, sample: SampleId) -> ContractResult<Self> {
+    pub fn bundled(
+        snapshot: impl Into<std::sync::Arc<AccountSnapshot>>,
+        sample: SampleId,
+    ) -> ContractResult<Self> {
+        let snapshot = snapshot.into();
         snapshot.validate()?;
         if sample.is_synthetic()
             && snapshot
@@ -276,7 +320,7 @@ impl ValidatedAccount {
     }
     pub fn with_preferences(&self, preferences: AllocationPreferences) -> ContractResult<Self> {
         let mut snapshot = self.snapshot.clone();
-        snapshot.preferences = preferences;
+        std::sync::Arc::make_mut(&mut snapshot).preferences = preferences;
         snapshot.validate()?;
         Ok(Self {
             snapshot,
@@ -285,6 +329,9 @@ impl ValidatedAccount {
     }
     pub fn snapshot(&self) -> &AccountSnapshot {
         &self.snapshot
+    }
+    pub fn shared_snapshot(&self) -> std::sync::Arc<AccountSnapshot> {
+        self.snapshot.clone()
     }
     pub fn sample(&self) -> Option<SampleId> {
         self.sample
@@ -300,6 +347,30 @@ impl ValidatedAccount {
 }
 
 impl AccountSnapshot {
+    pub fn with_import_declarations(
+        mut self,
+        declarations: Vec<ImportDeclaration>,
+    ) -> ContractResult<Self> {
+        let mut sections = BTreeSet::new();
+        for declaration in declarations {
+            if !sections.insert(declaration.section.clone()) {
+                return Err(ContractError::new(
+                    IssueCode::InvalidInput,
+                    "/declarations",
+                    "duplicate section declaration",
+                ));
+            }
+            match declaration.section {
+                InventorySection::Characters => {
+                    self.characters.declare(declaration.completeness)?
+                }
+                InventorySection::Weapons => self.weapons.declare(declaration.completeness)?,
+                InventorySection::Artifacts => self.artifacts.declare(declaration.completeness)?,
+            }
+        }
+        self.validate()?;
+        Ok(self)
+    }
     pub fn validate(&self) -> ContractResult<()> {
         let fail = |code, path: &str, message: &str| Err(ContractError::new(code, path, message));
         if self.characters.records().len() > MAX_CHARACTERS
@@ -314,6 +385,39 @@ impl AccountSnapshot {
         }
         if let Some(archive) = &self.source_archive {
             archive.validate()?;
+        }
+        for completeness in [
+            section_completeness(&self.characters),
+            section_completeness(&self.weapons),
+            section_completeness(&self.artifacts),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if let Completeness::DeclaredComplete { asserted_by } = completeness {
+                match asserted_by {
+                    CompletenessAuthority::User { statement }
+                        if statement.is_empty() || statement.len() > 1024 =>
+                    {
+                        return fail(
+                            IssueCode::InvalidInput,
+                            "/declarations",
+                            "completeness needs an explicit bounded user statement",
+                        );
+                    }
+                    CompletenessAuthority::Exporter { name, source } => {
+                        if name.is_empty() || name.len() > 128 {
+                            return fail(
+                                IssueCode::InvalidInput,
+                                "/declarations",
+                                "exporter name required",
+                            );
+                        }
+                        self.validate_source(&Some(source.clone()))?;
+                    }
+                    _ => {}
+                }
+            }
         }
         let mut identities = BTreeSet::new();
         let mut characters = BTreeSet::new();
@@ -572,6 +676,12 @@ impl AccountSnapshot {
             ));
         }
         Ok(())
+    }
+}
+fn section_completeness<T>(section: &Section<T>) -> Option<&Completeness> {
+    match section {
+        Section::Omitted => None,
+        Section::Supplied { completeness, .. } => Some(completeness),
     }
 }
 fn owner_key(owner: &OwnerRef) -> String {

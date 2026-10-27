@@ -5,7 +5,10 @@ pub mod normalization;
 pub mod numeric;
 pub mod prepared;
 pub mod protocol;
+pub mod references;
 pub mod sensitivity;
+pub mod setup;
+pub mod transport;
 pub mod wire;
 pub mod work;
 
