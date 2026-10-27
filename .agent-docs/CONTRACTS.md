@@ -614,9 +614,12 @@ fixture reuse is not an independent game oracle. Narrow independent budget revie
 passed21 owned controls and73/20/4 twice, including final event overhead/admission;
 it found one stale contradictory16MiB policy sentence, now corrected above. No
 budget code defect remained in those probes. Faults challenge selected sensors,
-not universal safety or a mutation score. Final staged/all-files/security/hosted
-acceptance remains pending. Empty-index hooks cannot certify new untracked files.
-**G1 remains unaccepted; no consumer launch.**
+not universal safety or a mutation score. Complete staged/new-file/all-files/security
+checks and normal hooks passed; parent repeated all21 probes. **Native G1 accepted**
+at1b664913a3d25f86e97b18b1069a442276e9b760, hosted40582912311attempt1 all four required
+jobs successful. Parent decision: tmp/G1_ACCEPTANCE.md. This is NOT production or
+release acceptance. P1/H0 shared-schema/build/lease prerequisites still precede
+engine/UI source launch; no automatic orchestrator resume.
 
 These are native codec/FSM/reference and Arc/Weak observations, NOT production
 Worker handlers, actual confirmations/settings migration, IDB transactions, Blob

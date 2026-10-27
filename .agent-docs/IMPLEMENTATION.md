@@ -119,7 +119,10 @@ PUBLIC remote, main protection, vulnerability alerts, automated security fixes,
 secret scanning/push protection verified via API; auto-merge disabled. Feature
 updates must go through the protected PR, not a direct push to main.
 
-Current handoff status: **G1 NOT ACCEPTED**. Do not start engine/UI consumers.
+Current handoff status: **G1 ACCEPTED AT THE NATIVE CONTRACT BOUNDARY**, commit
+`1b664913a3d25f86e97b18b1069a442276e9b760`, run40582912311attempt1. Not production
+or release acceptance. P1/H0 shared-schema/build/lease prerequisites remain before
+engine/UI source launch; no automatic orchestrator resume.
 - Orchestrator **450363 remains intentionally SIGSTOP-paused**. Phase 0/1 artifacts
   are under `tmp/big-build/aaru-engine`; read complete phase1 QA, not just headings.
 - Independent review `tmp/g1-review.md` found five blockers despite passing tests.
@@ -157,15 +160,16 @@ Current handoff status: **G1 NOT ACCEPTED**. Do not start engine/UI consumers.
   remaining budget code defect. It found one stale contradictory contract sentence;
   parent corrected that documentation-only defect. Review ownership is released.
   Complete reviewed snapshot/staged/all-files/native/WASM/security checks and normal
-  commit hooks passed. Parent repeated all21 probes. Foundation5b9c64f is pushed;
-  hosted acceptance is blocked, not consumer-ready. Native maximum tests are not
-  browser memory/paint/Worker proof.
-- Full-product replanner retry finished three bounded draft parts:
-  `tmp/full-product-replan-retry-{architecture,delivery,acceptance}.md`, indexed by
-  its distinct evidence report. Parent assessment/amendments are in
-  `tmp/full-product-replan-parent-review.md`; NOT yet adopted. Failed
-  original giant-write planner remains documented, not a completed plan. Reconcile
-  accepted APIs, full release rows and two disjoint leases before consumer launch.
+  commit hooks passed. Parent repeated all21 probes. Foundation5b9c64f and reviewed
+  hardening update1b66491 are pushed. Fresh40582912311 passed Linux native, Windows
+  native, dependency security and Quality gate. Parent decision tmp/G1_ACCEPTANCE.md.
+  Native maximum tests are not browser memory/paint/Worker proof.
+- Full-product replacement plan ADOPTED under `tmp/big-build/aaru-engine/phase1/`:
+  master-plan, architecture, delivery, acceptance and threads.json; read ALL parts.
+  Parent assessment amendments applied: correct byte scopes/current APIs, H0 material/
+  public schemas first, genuine initial source before full workspace/build validation,
+  two disjoint leases, all16 requirements and19functional/12browser rows. Old plans
+  archived as pre-replan, failed giant-write recovery unadopted. P1/H0 not launched.
 - Parent owns policy/hygiene, hooks/workflows/framework locks and acceptance docs.
   Contract coordinator must not stage or commit. Parent stages the complete reviewed
   snapshot only after ownership settles; staged-blob checks must match that snapshot.
@@ -178,7 +182,7 @@ Current handoff status: **G1 NOT ACCEPTED**. Do not start engine/UI consumers.
   reject advisories regardless of severity and fail closed on errors. Live query,
   denied-warning cargo-audit and cargo-deny passed the checked snapshot. Rerun all
   on final integration; do not claim zero vulnerabilities or universal database coverage.
-- Current pushed foundation `5b9c64f3c36e7146735cdff1f0c57767b3c2b018`,
+- Historical foundation `5b9c64f3c36e7146735cdff1f0c57767b3c2b018`,
   run40579865822: Windows native and dependency security succeeded; Linux checkout
   failed three times connecting to allowed github.com under blocked egress. Raw
   API/logs prove that failure even while run/job summaries still say in_progress.
@@ -186,10 +190,11 @@ Current handoff status: **G1 NOT ACCEPTED**. Do not start engine/UI consumers.
 - Official StepSecurityv2.22.3 released2026-10-27 explicitly addresses GitHub DNS/
   outbound-proxy false blocks. Parent verified tag46b06cea07f9e64621fdf066ba77ac6915163d43,
   source/checksums (Linux agent0.18.0), and updated all three immutable action pins;
-  Linux block/Windows audit/privilege/endpoint policy unchanged. Fresh hosted proof
-  remains pending; vendor release claim is not a measured repository root-cause fix.
-  Historical72f2048/run40530179308 passed;40493810875attempt1 also had real network
-  failures. Keep those evidence scopes distinct.
+  Linux block/Windows audit/privilege/endpoint policy unchanged. Fresh40582912311
+  all required jobs succeeded; Linux log confirms block and the expected0.18.0 checksum.
+  Stuck failed40579865822 was force-cancelled after normal cancellation failed, NOT
+  relabeled green. Success is consistent with the vendor fix, not universal resolver
+  proof. Historical72f2048 green and40493810875 failure remain scoped evidence.
 - Tools: PATH includes `$HOME/.cargo/bin`; audit0.22.2, deny0.20.2 and
   wasm-bindgen0.2.129 under `/tmp/aaru-audit-tools/bin`. Sandbox Chrome/driver
   156.0.8078.47 paths/provenance are in `tmp/RUNTIME_PROBE.md`. Completed disposable
@@ -211,12 +216,14 @@ Current handoff status: **G1 NOT ACCEPTED**. Do not start engine/UI consumers.
   Research is not mechanics implementation or waiver of substantial fixtures first.
 - Unnecessary first-party source/test/config comments were removed. Necessary
   action-version metadata remains. Keep the rule in all subsequent implementations.
-- Next: independently review stable integrated G1; run full locked native/WASM,
-  pre-commit and security gates; stage/commit only reviewed files, push and verify
-  actual hosted outcomes. Use a protected foundations PR, then resume two builders
-  against the accepted source. Reconcile their lockfiles and update the master plan
-  to the accepted topology. Require the real-browser vertical transport/storage/
-  cancellation gate, extensive fixtures, verified mechanics and full release evidence.
+- Next P1/H0: parent coordinates canonical material knowledge/counts/provenance and
+  public import/catalog/labels, exact dependency/manifest/entrypoint/build interfaces.
+  Then allocated E/U GENUINE initial source, park both for parent-only integration,
+  full all-target validation and real optimized inventory/IDB/settings/cancellation/
+  export vertical on Windows/Linux. No fake libs/workers or missing-target masking.
+  Extensive realistic corpus BEFORE recommendations; source-backed mechanics/search/
+  allocation/donor/recompute, DISTINCT roster/investment and full release evidence.
+  Protected PR/no auto-merge, complete staged/all-files/hooks and fresh CI each commit.
 
 Artifacts in ignored `.agent-docs/tmp/` are temporary evidence/coordination, not
 release deliverables or binding product requirements. Keep this note current and

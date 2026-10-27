@@ -26,11 +26,13 @@ comparison cap. Parent executed and corrected that regression, retaining origina
 all-files hooks and security checks pass; three restored full-suite budget faults
 fail assertions. See `tmp/g1-budget-scope-evidence.md`. Narrow independent follow-up
 passed21 controls and73/20/4 twice; its documentation-only contradiction is corrected.
-Complete staged/new-file checks, normal hooks and parent21-probe repeat passed;
-foundation5b9c64f is pushed. Run40579865822 passed Windows/security but Linux checkout
-failed under blocked egress. Verified StepSecurityv2.22.3 pin update addresses the
-vendor's reported DNS/proxy issue without reducing hardening; fresh hosted proof
-remains pending. G1 not accepted.
+Complete staged/new-file checks, normal hooks and parent21-probe repeat passed.
+Native G1 ACCEPTED at1b664913a3d25f86e97b18b1069a442276e9b760, run40582912311attempt1:
+Linux native, Windows native, security and Quality gate all successful. Verified
+StepSecurityv2.22.3 retained blocked Linux/audited Windows egress. Prior40579865822
+Linux checkout failure/stuck workflow was cancelled, not relabeled green; new success
+is not universal resolver proof. Full product plan adopted; P1/H0 integration next.
+No real application consumers or production-browser acceptance yet.
 Two disposable Linux sibling-browser runs and three runtime sensor challenges support
 only their observed primitives, not painted-pixel, production, long-run memory
 or Windows browser claims. Final integration/staged/hosted executions remain open.
