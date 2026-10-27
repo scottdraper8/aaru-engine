@@ -11,6 +11,11 @@ The user authorized initialization, remote creation, and PUBLIC visibility.
 GitHub repository: `https://github.com/scottdraper8/aaru-engine` (public).
 Never automatically merge dependency updates.
 
+The acceptance map in `REQUIREMENTS.md` tracks each original owner requirement
+and later clarification. Keep it current. It is not permission to scope the final
+product down to an illustrative demo. Intermediate slices are implementation
+milestones only; the requested endpoint remains a release-ready product.
+
 ## Durable requirements
 
 1. PolyForm Strict 1.0.0, exact upstream license text and copyright notice.
@@ -55,6 +60,8 @@ Never automatically merge dependency updates.
 
 Follow `behavioral_testing_overhaul_agent_protocol.md` and
 `Evidence_Governed_Agentic_Reverse_Engineering.pdf` (both read in full at intake).
+During orchestration, the PDF's complete extracted text is available at ignored
+`.agent-docs/tmp/evidence-methodology.txt` for agents without PDF-reading tools.
 Mechanism, observed execution, intent, and correctness are distinct. Use normative
 hand-calculated cases, invariants/metamorphic checks, differential small-domain
 search, real native/browser boundaries and targeted mutation/fault challenges.

@@ -1,6 +1,8 @@
 # Working rules
 
-Read `.agent-docs/IMPLEMENTATION.md` before substantive work. Read the original
+Read `.agent-docs/IMPLEMENTATION.md` and `.agent-docs/REQUIREMENTS.md` before
+substantive work. The owner's instructions override defaults or convenience;
+autonomy never authorizes weakening acceptance requirements. Read the original
 `.agent-docs/genshin_decision_engine_design_memo.md` in full for architecture or
 scope decisions. The two testing references in that directory govern evidence.
 
