@@ -5,7 +5,7 @@ characters and equipment you actually own, and understand what changes when you
 move an item between characters.
 
 **Not ready for real account recommendations yet.** The first milestone is a
-private, local-first website with realistic sample inventories. Sample data and
+local-first website with realistic sample inventories. Sample data and
 illustrative mechanics will always be labelled; they are not verified game facts.
 
 ## What to expect

@@ -3,6 +3,7 @@
 use regex::Regex;
 use serde_json::Value as Yaml;
 use sha2::{Digest, Sha256};
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::process::{Command, ExitCode};
 use std::sync::LazyLock;
@@ -29,9 +30,12 @@ static BYPASS: LazyLock<Regex> = LazyLock::new(|| {
 });
 static SENSITIVE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(concat!(
-        r"(?:^|/)(?:\.env(?:\..*)?|auth\.json|credentials\.json|",
-        r"secrets\.(?:json|ya?ml|toml)|id_(?:rsa|ed25519|ecdsa).*|",
-        r"private-data|node_modules|target|web/pkg)(?:/|$)|\.(?:pem|key|p12|pfx)$"
+        r"(?i)(?:^|/)(?:\.env(?:\..*)?|auth\.json|credentials\.json|",
+        r"service-account[^/]*\.json|[^/]*-credentials\.json|",
+        r"secrets\.(?:json|ya?ml|toml)|vault\.yaml|id_(?:rsa|ed25519|ecdsa)[^/]*|",
+        r"\.netrc|\.npmrc|\.pypirc|private-data|node_modules|vendor|",
+        r"\.venv|__pycache__|dist|build|out|\.idea|\.vscode|target|web/pkg|\.site)",
+        r"(?:/|$)|\.(?:pem|key|p12|pfx|pyc|o|so|dylib)$"
     ))
     .unwrap()
 });
@@ -105,11 +109,16 @@ fn permissions_are_read_only(value: &Yaml) -> bool {
 }
 
 fn workflow(name: &str, document: &Yaml, errors: &mut Vec<String>) {
-    if document
-        .get("on")
-        .and_then(|events| events.get("pull_request_target"))
-        .is_some()
-    {
+    let privileged_trigger = document.get("on").is_some_and(|events| {
+        events.as_str() == Some("pull_request_target")
+            || events.get("pull_request_target").is_some()
+            || events.as_array().is_some_and(|items| {
+                items
+                    .iter()
+                    .any(|event| event.as_str() == Some("pull_request_target"))
+            })
+    });
+    if privileged_trigger {
         issue(
             errors,
             name,
@@ -130,6 +139,67 @@ fn workflow(name: &str, document: &Yaml, errors: &mut Vec<String>) {
         issue(errors, name, "workflow must define jobs");
         return;
     };
+    if name == ".github/workflows/ci.yml" {
+        let gate = jobs
+            .iter()
+            .find(|(_, job)| job.get("name").and_then(Yaml::as_str) == Some("Quality gate"));
+        if let Some((id, gate)) = gate {
+            let expected: BTreeSet<_> = jobs
+                .keys()
+                .filter(|other| *other != id)
+                .map(String::as_str)
+                .collect();
+            let actual: BTreeSet<_> = gate
+                .get("needs")
+                .and_then(Yaml::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Yaml::as_str)
+                .collect();
+            if expected.is_empty() || actual != expected {
+                issue(
+                    errors,
+                    name,
+                    "Quality gate must depend on every other CI job",
+                );
+            }
+            if !matches!(
+                gate.get("if").and_then(Yaml::as_str),
+                Some("${{ always() }}" | "always()")
+            ) {
+                issue(
+                    errors,
+                    name,
+                    "Quality gate must run even when prerequisites fail",
+                );
+            }
+            let real_gate = gate
+                .get("steps")
+                .and_then(Yaml::as_array)
+                .is_some_and(|steps| {
+                    steps.iter().any(|step| {
+                        step.get("run").and_then(Yaml::as_str).is_some_and(|run| {
+                            run.trim()
+                                == "cargo run --locked --quiet -p aaru-repo-policy -- ci-gate"
+                        }) && step.get("if").is_none()
+                            && step
+                                .get("env")
+                                .and_then(|env| env.get("AARU_CI_NEEDS"))
+                                .and_then(Yaml::as_str)
+                                == Some("${{ toJSON(needs) }}")
+                    })
+                });
+            if !real_gate {
+                issue(
+                    errors,
+                    name,
+                    "Quality gate must evaluate actual prerequisite outcomes in Rust",
+                );
+            }
+        } else {
+            issue(errors, name, "missing required Quality gate job");
+        }
+    }
     for (id, job) in jobs {
         let label = format!("job {id}");
         if !job
@@ -171,6 +241,34 @@ fn workflow(name: &str, document: &Yaml, errors: &mut Vec<String>) {
                 name,
                 format!("{label} must harden the runner as its first step"),
             );
+        }
+        if let Some(hardening) = steps.first() {
+            if hardening.get("if").is_some() {
+                issue(
+                    errors,
+                    name,
+                    format!("{label}: runner hardening cannot be conditional"),
+                );
+            }
+            let mode = hardening
+                .get("with")
+                .and_then(|options| options.get("egress-policy"))
+                .and_then(Yaml::as_str);
+            let runner = job.get("runs-on").and_then(Yaml::as_str).unwrap_or("");
+            let valid_mode = if runner.starts_with("ubuntu-") {
+                mode == Some("block")
+            } else if runner.starts_with("windows-") {
+                mode == Some("audit")
+            } else {
+                mode == Some("${{ runner.os == 'Linux' && 'block' || 'audit' }}")
+            };
+            if !valid_mode {
+                issue(
+                    errors,
+                    name,
+                    format!("{label}: hardening must use Linux block / Windows audit mode"),
+                );
+            }
         }
         for step in steps {
             if let Some(action) = step.get("uses").and_then(Yaml::as_str)
@@ -239,7 +337,9 @@ fn inspect_text(name: &str, text: &str) -> Vec<String> {
     {
         issue(&mut errors, name, "executable hook or lint bypass");
     }
-    if extension == "py" || path.file_name().and_then(|s| s.to_str()) == Some("package.json") {
+    if matches!(extension, "py" | "js" | "mjs" | "ts" | "tsx" | "jsx")
+        || path.file_name().and_then(|s| s.to_str()) == Some("package.json")
+    {
         issue(
             &mut errors,
             name,
@@ -336,6 +436,14 @@ fn inspect_text(name: &str, text: &str) -> Vec<String> {
     errors
 }
 
+fn is_restricted(name: &str) -> bool {
+    SENSITIVE.is_match(name)
+        && !matches!(
+            Path::new(name).file_name().and_then(|file| file.to_str()),
+            Some(".env.example" | ".env.sample" | ".env.template")
+        )
+}
+
 fn inspect_repository() -> Result<Vec<String>, String> {
     let result = Command::new("git")
         .args(["ls-files", "--cached", "-z"])
@@ -347,11 +455,7 @@ fn inspect_repository() -> Result<Vec<String>, String> {
     let names = std::str::from_utf8(&result.stdout).map_err(|e| e.to_string())?;
     let mut errors = Vec::new();
     for name in names.split('\0').filter(|n| !n.is_empty()) {
-        if SENSITIVE.is_match(name)
-            && ![".example", ".sample", ".template"]
-                .iter()
-                .any(|suffix| name.ends_with(suffix))
-        {
+        if is_restricted(name) {
             issue(
                 &mut errors,
                 name,
@@ -382,8 +486,30 @@ fn inspect_repository() -> Result<Vec<String>, String> {
     Ok(errors)
 }
 
+fn ci_outcomes(text: &str) -> Result<Vec<String>, String> {
+    let value: serde_json::Value = serde_json::from_str(text).map_err(|error| error.to_string())?;
+    let jobs = value
+        .as_object()
+        .filter(|jobs| !jobs.is_empty())
+        .ok_or("missing prerequisite outcomes")?;
+    Ok(jobs
+        .iter()
+        .filter(|(_, outcome)| {
+            outcome.get("result").and_then(serde_json::Value::as_str) != Some("success")
+        })
+        .map(|(job, _)| format!("required job {job} did not succeed"))
+        .collect())
+}
+
 fn main() -> ExitCode {
-    match inspect_repository() {
+    let result = match std::env::args().nth(1).as_deref() {
+        None => inspect_repository(),
+        Some("ci-gate") => std::env::var("AARU_CI_NEEDS")
+            .map_err(|error| error.to_string())
+            .and_then(|text| ci_outcomes(&text)),
+        Some(argument) => Err(format!("unknown policy command: {argument}")),
+    };
+    match result {
         Ok(errors) if errors.is_empty() => ExitCode::SUCCESS,
         Ok(errors) => {
             for error in errors {
@@ -400,7 +526,29 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::inspect_text;
+    use super::{ci_outcomes, inspect_text, is_restricted};
+
+    #[test]
+    fn aggregate_gate_rejects_skipped_failed_cancelled_and_missing_jobs() {
+        assert!(
+            ci_outcomes(r#"{"native":{"result":"success"},"security":{"result":"success"}}"#)
+                .unwrap()
+                .is_empty()
+        );
+        for status in ["skipped", "failure", "cancelled", "unknown"] {
+            let outcomes = format!(
+                r#"{{"native":{{"result":"success"}},"security":{{"result":"{status}"}}}}"#
+            );
+            assert_eq!(
+                ci_outcomes(&outcomes).unwrap(),
+                vec!["required job security did not succeed"]
+            );
+        }
+        assert!(!ci_outcomes(r#"{"native":{}}"#).unwrap().is_empty());
+        assert!(ci_outcomes("{}").is_err());
+        assert!(ci_outcomes("[]").is_err());
+        assert!(ci_outcomes("not json").is_err());
+    }
 
     #[test]
     fn first_party_license_is_validated_independently_of_dependency_licenses() {
@@ -479,28 +627,85 @@ mod tests {
     fn hardened_workflow() -> String {
         let sha = "a".repeat(40);
         format!(
-            "permissions:\n  contents: read\njobs:\n  native:\n    runs-on: ubuntu-24.04\n    timeout-minutes: 20\n    steps:\n      - uses: step-security/harden-runner@{sha}\n      - uses: actions/checkout@{sha}\n        with:\n          persist-credentials: false\n"
+            "permissions:\n  contents: read\njobs:\n  native:\n    runs-on: ubuntu-24.04\n    timeout-minutes: 20\n    steps:\n      - uses: step-security/harden-runner@{sha}\n        with:\n          egress-policy: block\n      - uses: actions/checkout@{sha}\n        with:\n          persist-credentials: false\n"
         )
     }
 
     #[test]
     fn each_job_requires_first_step_hardening_and_safe_checkout() {
         let safe = hardened_workflow();
-        assert!(inspect_text(".github/workflows/ci.yml", &safe).is_empty());
+        assert!(inspect_text(".github/workflows/example.yml", &safe).is_empty());
         for faulty in [
             safe.replace(&"a".repeat(40), "v4"),
             safe.replace("timeout-minutes: 20", "timeout-minutes: 0"),
             safe.replace("persist-credentials: false", "persist-credentials: true"),
             safe.replace("contents: read", "contents: write"),
+            safe.replace("egress-policy: block", "egress-policy: audit"),
+            safe.replace(
+                "egress-policy: block",
+                "egress-policy: block\n        if: false",
+            ),
             format!(
                 "{safe}  unprotected:\n    runs-on: windows-2025\n    timeout-minutes: 10\n    steps:\n      - run: cargo test --locked\n"
             ),
             format!("{safe}    continue-on-error: true\n"),
         ] {
             assert!(
+                !inspect_text(".github/workflows/example.yml", &faulty).is_empty(),
+                "accepted {faulty}"
+            );
+        }
+    }
+
+    #[test]
+    fn aggregate_workflow_cannot_omit_prerequisites_or_fake_a_success() {
+        let sha = "a".repeat(40);
+        let safe = format!(
+            "{}  gate:\n    name: Quality gate\n    needs: [native]\n    if: always()\n    runs-on: ubuntu-24.04\n    timeout-minutes: 5\n    steps:\n      - uses: step-security/harden-runner@{sha}\n        with:\n          egress-policy: block\n      - run: cargo run --locked --quiet -p aaru-repo-policy -- ci-gate\n        env:\n          AARU_CI_NEEDS: ${{{{ toJSON(needs) }}}}\n",
+            hardened_workflow()
+        );
+        assert!(inspect_text(".github/workflows/ci.yml", &safe).is_empty());
+        for faulty in [
+            safe.replace("needs: [native]", "needs: []"),
+            safe.replace("if: always()", "if: success()"),
+            safe.replace(
+                "cargo run --locked --quiet -p aaru-repo-policy -- ci-gate",
+                "echo success",
+            ),
+            safe.replace("toJSON(needs)", "toJSON(github)"),
+        ] {
+            assert!(
                 !inspect_text(".github/workflows/ci.yml", &faulty).is_empty(),
                 "accepted {faulty}"
             );
+        }
+    }
+
+    #[test]
+    fn restricted_paths_are_rejected_before_any_content_read() {
+        for name in [
+            "auth.json",
+            "service-account-prod.json",
+            "local-credentials.json",
+            "vault.yaml",
+            ".npmrc",
+            ".env.local",
+            ".env.dev.sample",
+            "nested/credentials.json",
+            "NODE_MODULES/x.js",
+            "target/a.rs",
+            "web/pkg/a.js",
+        ] {
+            assert!(is_restricted(name), "accepted {name}");
+        }
+        for name in [
+            ".env.example",
+            ".env.sample",
+            "nested/.env.template",
+            "fixtures/realistic.json",
+            "crates/aaru-contract/src/lib.rs",
+        ] {
+            assert!(!is_restricted(name), "rejected {name}");
         }
     }
 

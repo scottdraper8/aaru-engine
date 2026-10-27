@@ -23,8 +23,9 @@ milestones only; the requested endpoint remains a release-ready product.
 ## Durable requirements
 
 1. PolyForm Strict 1.0.0, exact upstream license text and copyright notice.
-2. Exact direct dependency/tool versions, Cargo/npm lockfiles, SHA-pinned actions
-   and hooks. Locked installs; no unreviewed lifecycle scripts.
+2. Exact dependency/tool versions, Cargo.lock, hash-locked external pre-commit
+   framework requirements, SHA-pinned actions/hooks. Locked installs; no unreviewed
+   lifecycle scripts. No Node project stack.
 3. pre-commit with Rust formatting, strict Clippy, behavioral tests, web lint and
    repo-specific policy checks. No bypasses, suppressions, or skipped tests.
 4. Harden every hosted CI job with StepSecurity; least privilege, bounded time,
@@ -33,7 +34,7 @@ milestones only; the requested endpoint remains a release-ready product.
    policy enforced in CI. No unreasonable waiting periods.
 5. Dependabot opens security-fix PRs with exact direct pins, never auto-merges.
    Security updates require repository alerts/security-update settings as well
-   as configuration. Enforce required CI through branch protection if available.
+   as configuration. Keep required CI enforced through public main protection.
 6. Data before recommendations: extensive realistic synthetic account inventories
    including unequipped weapons/artifacts, levels, ascensions, constellations,
    talents, refinements, duplicates, locks, sparse/large/incomplete accounts.
@@ -94,19 +95,57 @@ remain visible. Workspace foundation and Rust `aaru-repo-policy` already exist.
 
 ## Current state / next action
 
-Initial folder contained only the three supplied reference documents and an OS
-`.directory` file. There was no Git repository, source, tests or baseline to run.
-Rust 1.98.1 is installed under `$HOME/.cargo/bin`; prepend that directory when
-running cargo/pre-commit from the shell. Toolchain/wasm32/rustfmt/Clippy pinned in
-`rust-toolchain.toml`. pre-commit 4.6.2 and authenticated gh are available.
+Worktree branch: `feat/rust-decision-engine`. Rust 1.98.1 is installed under
+`$HOME/.cargo/bin`; prepend it to PATH for cargo/pre-commit. Toolchain, wasm32,
+rustfmt and Clippy are pinned. External pre-commit framework is 4.6.2 with exact
+hashed requirements in `.github/`; there is no first-party Python/Node source.
 
-Git initialized; PUBLIC remote created (explicit owner approval). GitHub
-vulnerability alerts and automated security fixes enabled; auto-merge disabled.
-Multi-phase build artifacts are in ignored `.agent-docs/tmp/big-build/aaru-engine`.
-Read current requirements before resuming; prior exploratory artifacts are not
-binding implementation decisions. Rust policy tests, formatting and strict
-Clippy have executed successfully; engine/UI evidence remains to be established.
-Independently verify the resulting implementation and checks before release.
+PUBLIC remote, main protection, vulnerability alerts, automated security fixes,
+secret scanning/push protection verified via API; auto-merge disabled. Feature
+updates must go through the protected PR, not a direct push to main.
+
+Active coordination (remove this section when the handoff is complete):
+- Orchestrator PID **450363 is intentionally SIGSTOP-paused**, not failed. Phase
+  0/1 completed under `.agent-docs/tmp/big-build/aaru-engine`. Do NOT resume it
+  until G0/G1 is accepted; otherwise planners/builders start without valid shared
+  contracts. Read the complete Phase 1 `qa-review.md`, especially severe S1–S4.
+- Initial contract writer finished owned commit `2e96a48`. Contract-owned paths
+  are clean, but G1 is NOT accepted just because tests pass. Next run the focused
+  follow-up at `.agent-docs/tmp/contract-corrections-prompt.md` after reading
+  `.agent-docs/tmp/contract-review-required.md` and the complete architectural QA.
+  Coordinator owns `crates/aaru-contract/**`, `CONTRACTS.md`, and genuinely needed
+  root Cargo/lock changes only. No consumer engine/UI threads before acceptance.
+- Parent owns pending `.github/workflows/ci.yml`, `repo-policy` enhancements,
+  `deny.toml`, `.gitattributes`, README and this acceptance documentation. Do not
+  accidentally include other owners' staged changes in a commit.
+- On the completed combined tree, formatting, full locked workspace tests
+  (16 contract + 10 policy), strict all-target Clippy, cargo-audit with denied
+  warnings and cargo-deny all passed. Writer also checked contract wasm32
+  compilation and observed two detected/reverted numeric and generation faults.
+  These are scoped contract/policy results, not live-product correctness proof.
+  Run pre-commit against staged parent CI/policy changes before pushing. No checks
+  have been bypassed.
+- `cargo-audit` 0.22.2 and `cargo-deny` 0.20.2 installed under
+  `/tmp/aaru-audit-tools/bin`; current graph audited with denied warnings. Run
+  both again after contract finalization, including the explicit license policy.
+- Limited optimized Rust/WASM/module-worker/CSP compatibility was observed in
+  actual Chrome + ChromeDriver 156.0.8078.47 with normal sandbox. Exact provenance,
+  executable paths and artifact hashes are in `.agent-docs/tmp/RUNTIME_PROBE.md`.
+  wasm-bindgen CLI/test runner 0.2.129 installed under the same tooling root.
+  Probe server/driver were stopped. This is NOT production Aaru browser evidence.
+- Security follow-up before final acceptance: exact hashed framework requirements
+  do not by themselves lock the external generic hook environment's dependencies.
+  Close that transitive-resolution gap without removing equivalent checks or the
+  required pre-commit framework; include external framework advisory coverage.
+- Next: accept/fix G1, run and commit all required gates, push and verify hardened
+  Linux/Windows/advisory hosted CI, protected PR for foundations, then resume the
+  two implementation threads against the accepted contracts. Both threads may
+  own crate-local manifests and regenerate worktree Cargo.lock; coordinator
+  resolves integration. Freeze complete interfaces instead of guessed stubs.
+
+Artifacts in ignored `.agent-docs/tmp/` are temporary evidence/coordination, not
+release deliverables or binding product requirements. Keep this note current and
+remove obsolete process details. No release claim until actual product evidence.
 
 Hosted enforcement contract:
 - Remote main must require pull requests and the GitHub Actions check named
