@@ -65,3 +65,10 @@ vault.yaml
 # Agent harness auth
 .pi/agent/auth.json
 .claude/credentials.json
+
+# Aaru-generated artifacts and local account data
+target/
+web/pkg/
+.site/
+private-data/
+*.good.json

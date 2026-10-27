@@ -76,8 +76,23 @@ Initial folder contained only the three supplied reference documents and an OS
 Rust 1.98.1 is installed under `$HOME/.cargo/bin` but that directory is not in the
 shell PATH. Node 26.12.1, Python, pre-commit 4.6.2, uv and authenticated gh exist.
 
-Scaffolding in progress. Establish checked-in security/tooling foundations and
-launch the multi-phase build, then independently verify all claimed checks.
+Git initialized; private remote created and initial policies committed. GitHub
+vulnerability alerts and automated security fixes enabled; auto-merge disabled.
+Multi-phase build launched (artifacts in ignored `.agent-docs/tmp/big-build/aaru-engine`).
+Independently verify the resulting implementation and checks before publishing.
+
+External release constraints verified through API/upstream docs:
+- GitHub returns HTTP 403 for branch protection on this private repository: the
+  owner's plan needs upgrading, or the owner must approve making the repo public.
+  Do not claim required checks are remotely enforced until this is resolved.
+- StepSecurity's current README says private repos require an Enterprise plan.
+  Do not silently treat an installed action as active protection. Public hosted
+  runners have a free tier; Windows supports audit mode only, Linux supports
+  block mode. Source: https://github.com/step-security/harden-runner .
+- Keep the repository private unless the owner authorizes publication. No spend
+  or subscription changes are authorized. Implement CI, document this activation
+  gap honestly, and do not weaken checks to conceal it.
+
 Release is blocked until verified mechanics coverage, full behavior/UI/security
 checks and honest scope documentation exist. A synthetic-data demonstration is
 not a validated live-account recommendation release.
