@@ -1,0 +1,54 @@
+minimum_pre_commit_version: '4.6.2'
+exclude: ^\.agent-docs/(genshin_decision_engine_design_memo\.md|behavioral_testing_overhaul_agent_protocol\.md|Evidence_Governed_Agentic_Reverse_Engineering\.pdf)$
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c # v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      - id: check-added-large-files
+        args: ['--maxkb=2048']
+      - id: detect-private-key
+  - repo: local
+    hooks:
+      - id: repo-policy
+        name: exact pins, trust boundaries, and no check bypasses
+        entry: python3 tools/repo_policy.py
+        language: system
+        pass_filenames: false
+        always_run: true
+      - id: policy-tests
+        name: policy fault-detection tests
+        entry: python3 -m unittest discover -s tools -p test_*.py
+        language: system
+        pass_filenames: false
+        always_run: true
+      - id: rust-fmt
+        name: Rust formatting
+        entry: cargo fmt --all --check
+        language: system
+        pass_filenames: false
+        files: (\.rs$|Cargo\.(toml|lock)$|rust-toolchain\.toml$)
+      - id: rust-clippy
+        name: Rust linting without warnings
+        entry: cargo clippy --workspace --all-targets --locked -- -D warnings
+        language: system
+        pass_filenames: false
+        files: (\.rs$|Cargo\.(toml|lock)$)
+      - id: rust-tests
+        name: deterministic engine and inventory behavioral tests
+        entry: cargo test --workspace --locked
+        language: system
+        pass_filenames: false
+        files: (\.rs$|Cargo\.(toml|lock)$|fixtures/.*\.json$)
+      - id: web-check
+        name: website lint and formatting
+        entry: npm run check
+        language: system
+        pass_filenames: false
+        files: (\.(js|mjs|ts|css|html)$|package(-lock)?\.json$|biome\.json$)

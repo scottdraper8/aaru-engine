@@ -1,0 +1,23 @@
+# Local-only user material
+.directory
+.env
+.env.*
+!.env.example
+!.env.template
+!.env.sample
+private-data/
+*.good.json
+
+# Tooling and generated files
+node_modules/
+target/
+web/pkg/
+.site/
+playwright-report/
+test-results/
+.agent-docs/tmp/
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+Thumbs.db

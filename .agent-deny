@@ -1,0 +1,67 @@
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Dependencies
+node_modules
+bower_components
+vendor/
+.venv
+__pycache__
+
+# Build output
+dist
+build
+out
+*.pyc
+*.o
+*.so
+*.dylib
+
+# IDE/editor
+.idea
+.vscode
+*.swp
+*.swo
+*~
+
+# Package manager caches
+.npm
+.yarn
+.pnp.*
+
+# Environment files (but not examples/templates)
+.env
+.env.*
+!.env.example
+!.env.template
+!.env.sample
+
+# Credentials and auth
+auth.json
+credentials.json
+service-account*.json
+*-credentials.json
+
+# Keys and certificates
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
+id_ecdsa*
+
+# Token/secret files
+.netrc
+.npmrc
+.pypirc
+secrets.yaml
+secrets.json
+secrets.toml
+vault.yaml
+
+# Agent harness auth
+.pi/agent/auth.json
+.claude/credentials.json
