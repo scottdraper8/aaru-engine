@@ -31,6 +31,10 @@ scope decisions. The two testing references in that directory govern evidence.
 - Resource moves must account for donor losses and unique item conflicts.
 - No obsolete code, compatibility shims, abandoned approaches, or unused files.
   Replace pre-release designs cleanly. Keep documentation lean and current.
+- Write self-explanatory code. Do not add comments unless absolutely necessary;
+  organizational section headers are allowed. This applies retroactively: purge
+  unnecessary existing comments. Keep essential rationale/contracts only when
+  clearer code or the authoritative documentation cannot adequately convey them.
 - User docs are plain English for nontechnical players, not contribution guides.
 - All player-facing features/tools follow `.agent-docs/PRODUCT_LANGUAGE.md`:
   Genshin/Sumeru/Aaru themed, accurate terminology, plain-English action labels,

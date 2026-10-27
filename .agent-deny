@@ -72,3 +72,4 @@ web/pkg/
 .site/
 private-data/
 *.good.json
+*.aaru.json

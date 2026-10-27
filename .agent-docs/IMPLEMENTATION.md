@@ -60,6 +60,9 @@ milestones only; the requested endpoint remains a release-ready product.
 13. Performance comes from measured representative workloads, deterministic pruning
     and recomputation, not unexplained heuristic pair scores or weak test fixtures.
 14. No legacy code/shims or stale docs. Correctness/thoroughness over delivery speed.
+15. Self-explanatory code; no comments unless absolutely necessary. Organizational
+    headers are allowed. Apply retroactively to existing source/tests/tooling and
+    remove redundant narration and documentation duplicated by authoritative docs.
 
 The PDF is reference material only. No PDF-specific tooling in pre-commit or CI;
 its text extraction is a one-time reading aid, never a project workflow.
@@ -93,6 +96,16 @@ not a second Python/Node stack. Synthetic fixtures use the same import/evaluatio
 path as user data. Public mechanics independently versioned; unsupported facts
 remain visible. Workspace foundation and Rust `aaru-repo-policy` already exist.
 
+Use a thin Rust DOM controller and two directly owned sibling module Workers:
+private Rust UI supervisor and Rust engine. Large logical JSON, fingerprints and
+validation stay off the DOM thread; compact controls/pages are at most 16 KiB.
+The DOM owns Web Lock/IndexedDB settlement and opaque recovery/UI-state anchors.
+Cancellable bulk work can terminate both workers immediately; durable reservations
+remain non-cancellable. Keep 50 ms visible cancellation acceptance. Cooperative
+search retains 256-unit/4 ms slices; isolated terminable codecs are not falsely
+classified as short primitives. This design addresses observed >50 ms WASM calls;
+its implementation, memory and platform behavior still require real-browser proof.
+
 ## Current state / next action
 
 Worktree branch: `feat/rust-decision-engine`. Rust 1.98.1 is installed under
@@ -104,44 +117,50 @@ PUBLIC remote, main protection, vulnerability alerts, automated security fixes,
 secret scanning/push protection verified via API; auto-merge disabled. Feature
 updates must go through the protected PR, not a direct push to main.
 
-Active coordination (remove this section when the handoff is complete):
-- Orchestrator PID **450363 is intentionally SIGSTOP-paused**, not failed. Phase
-  0/1 completed under `.agent-docs/tmp/big-build/aaru-engine`. Do NOT resume it
-  until G0/G1 is accepted; otherwise planners/builders start without valid shared
-  contracts. Read the complete Phase 1 `qa-review.md`, especially severe S1–S4.
-- Initial contract writer finished owned commit `2e96a48`. Contract-owned paths
-  are clean, but G1 is NOT accepted just because tests pass. Next run the focused
-  follow-up at `.agent-docs/tmp/contract-corrections-prompt.md` after reading
-  `.agent-docs/tmp/contract-review-required.md` and the complete architectural QA.
-  Coordinator owns `crates/aaru-contract/**`, `CONTRACTS.md`, and genuinely needed
-  root Cargo/lock changes only. No consumer engine/UI threads before acceptance.
-- Parent owns pending `.github/workflows/ci.yml`, `repo-policy` enhancements,
-  `deny.toml`, `.gitattributes`, README and this acceptance documentation. Do not
-  accidentally include other owners' staged changes in a commit.
-- On the completed combined tree, formatting, full locked workspace tests
-  (16 contract + 10 policy), strict all-target Clippy, cargo-audit with denied
-  warnings and cargo-deny all passed. Writer also checked contract wasm32
-  compilation and observed two detected/reverted numeric and generation faults.
-  These are scoped contract/policy results, not live-product correctness proof.
-  Run pre-commit against staged parent CI/policy changes before pushing. No checks
-  have been bypassed.
-- `cargo-audit` 0.22.2 and `cargo-deny` 0.20.2 installed under
-  `/tmp/aaru-audit-tools/bin`; current graph audited with denied warnings. Run
-  both again after contract finalization, including the explicit license policy.
-- Limited optimized Rust/WASM/module-worker/CSP compatibility was observed in
-  actual Chrome + ChromeDriver 156.0.8078.47 with normal sandbox. Exact provenance,
-  executable paths and artifact hashes are in `.agent-docs/tmp/RUNTIME_PROBE.md`.
-  wasm-bindgen CLI/test runner 0.2.129 installed under the same tooling root.
-  Probe server/driver were stopped. This is NOT production Aaru browser evidence.
-- Security follow-up before final acceptance: exact hashed framework requirements
-  do not by themselves lock the external generic hook environment's dependencies.
-  Close that transitive-resolution gap without removing equivalent checks or the
-  required pre-commit framework; include external framework advisory coverage.
-- Next: accept/fix G1, run and commit all required gates, push and verify hardened
-  Linux/Windows/advisory hosted CI, protected PR for foundations, then resume the
-  two implementation threads against the accepted contracts. Both threads may
-  own crate-local manifests and regenerate worktree Cargo.lock; coordinator
-  resolves integration. Freeze complete interfaces instead of guessed stubs.
+Current handoff status: **G1 NOT ACCEPTED**. Do not start engine/UI consumers.
+- Orchestrator **450363 remains intentionally SIGSTOP-paused**. Phase 0/1 artifacts
+  are under `tmp/big-build/aaru-engine`; read complete phase1 QA, not just headings.
+- Independent review `tmp/g1-review.md` found five blockers despite passing tests.
+  `tmp/g1-repairs.md` records their repairs, 34 passing contract tests and twelve
+  isolated detected/reverted faults. Native FSM evidence is not browser proof.
+- Real optimized-WASM probes observed allowed 16 MiB fingerprints at 56–66 ms and
+  decoding at 77–92 ms. `tmp/g1-budget-evidence.md` records exact scope/provenance.
+  The approved sibling-worker design is in `tmp/g1-bulk-architecture.md`, with
+  binding integration amendments in `tmp/g1-bulk-acceptance.md`.
+- Contract integration uses `tmp/g1-transport-integration-prompt.md`; output is
+  `tmp/g1-transport-integration.md{,.json}`. Owns contract crate/CONTRACTS.md and
+  genuinely needed Cargo/lock integration only; do not overwrite its work. It
+  must freeze physical transport, safe reservations/bootstrap, retained session
+  and UI-state checkpoints, public setup metadata and honest current-slot knowledge.
+  Omitted inventory cannot become known-empty current gear.
+- Parent owns policy/hygiene, hooks/workflows/framework locks and acceptance docs.
+  Parent files are deliberately staged so checks inspect matching configuration;
+  contract coordinator must not stage/commit them. Parent integrates after review.
+- Locked local Rust hook equivalents retain pre-commit without separately resolved
+  generic-hook environments. Policy passed 20 unit + 4 real temporary-Git/CLI tests,
+  strict Clippy, formatting and actual staged-repository inspection. This includes
+  staged/worktree separation, raw adversarial cases, key detection, portability,
+  exact 2 MiB/mode boundaries and mandatory Linux/Windows/advisory CI enforcement.
+- Rust OSV checks cover the exact hash-locked external framework dependency graph,
+  reject advisories regardless of severity and fail closed on errors. Live query,
+  denied-warning cargo-audit and cargo-deny passed the checked snapshot. Rerun all
+  on final integration; do not claim zero vulnerabilities or universal database coverage.
+- Hosted baseline `fd40cb8`, run40493810875 attempt2 passed Linux native, Windows
+  native, dependency security and Quality gate. Attempt1 had real hardening/DNS
+  connectivity failures and was cancelled. Unchanged rerun success does not prove
+  the resolver issue fixed. Current uncommitted changes need fresh hosted evidence.
+- Tools: PATH includes `$HOME/.cargo/bin`; audit0.22.2, deny0.20.2 and
+  wasm-bindgen0.2.129 under `/tmp/aaru-audit-tools/bin`. Sandbox Chrome/driver
+  156.0.8078.47 paths/provenance are in `tmp/RUNTIME_PROBE.md`. Probe sessions and
+  server/driver processes are stopped. No production browser claim is established.
+- Unnecessary first-party source/test/config comments were removed. Necessary
+  action-version metadata remains. Keep the rule in all subsequent implementations.
+- Next: independently review stable integrated G1; run full locked native/WASM,
+  pre-commit and security gates; stage/commit only reviewed files, push and verify
+  actual hosted outcomes. Use a protected foundations PR, then resume two builders
+  against the accepted source. Reconcile their lockfiles and update the master plan
+  to the accepted topology. Require the real-browser vertical transport/storage/
+  cancellation gate, extensive fixtures, verified mechanics and full release evidence.
 
 Artifacts in ignored `.agent-docs/tmp/` are temporary evidence/coordination, not
 release deliverables or binding product requirements. Keep this note current and

@@ -1,412 +1,487 @@
-# Shared contract freeze — v1
+# Shared schema 1 — engine/browser handoff
 
-This is the builder contract, not a live-mechanics or release-readiness claim.
-`crates/aaru-contract` is authoritative for field names, enum variants and bounds.
-All first-party implementations and tests are Rust. Transport is UTF-8 JSON text,
-not JavaScript objects; never parse account/protocol JSON through JavaScript.
+`crates/aaru-contract` defines the shared API; this document defines its semantics.
+G1 remains subject to parent acceptance. This is not a product/release claim.
+All first-party application, UI, tests and repository tooling are Rust. Static
+HTML/CSS and generated initialization-only WASM bindings/loaders are permitted.
+Follow `PRODUCT_LANGUAGE.md`: Aaru/Sumeru identity, literal novice-readable
+operations, original accessible styling, no spoilers or invented mechanics.
 
-## Ownership and fixed paths
+## Ownership and deployment
 
-| Owner | Packages and paths |
+| Owner | Responsibility |
 | --- | --- |
-| Coordinator | `aaru-contract` (`crates/aaru-contract/**`), this document, shared root dependencies/contracts; root lockfile integration |
-| Engine thread | `aaru-engine` (`crates/aaru-engine/**`), `aaru-wasm` (`crates/aaru-wasm/**`), `data/**`, `fixtures/**` |
-| UI thread | `aaru-web` (`crates/aaru-web/**`), `web/**`, `tools/browser-tests/**` (package `aaru-browser-tests`), player help/README |
-| Parent coordinator | Policy, CI, hooks, toolchain, `tools/xtask/**` (package `aaru-xtask`), acceptance/evidence docs |
+| Contract coordinator | `crates/aaru-contract/**`, shared schema and this document; root dependency/lock integration |
+| Engine thread | `aaru-engine`, `aaru-wasm`, Rust worker runtime/scheduler, `fixtures/**`, `data/**` |
+| UI thread | `aaru-web`, browser worker construction/lifecycle, `web/**`, `tools/browser-tests/**`, player help |
+| Parent coordinator | Build/server/bootstrap tooling, CI/security/policy, acceptance/release coverage matrix |
 
-Each implementation thread MAY own its crate-local Cargo manifest and regenerate
-its worktree `Cargo.lock` as a generated integration artifact. Coordinator resolves
-lockfile merges. Shared semantic contracts and root dependencies remain
-coordinator-owned. The root member glob is `crates/*` alongside
-`tools/repo-policy`; new tool packages outside that glob require coordinator
-membership changes. Do not edit another thread's source/fixtures.
+Both builders may own crate-local manifests and regenerate worktree lockfiles;
+parent resolves integration. Preserve exact pins and workspace `crates/*` glob.
+Dependencies: web -> contract only; engine -> contract; wasm -> engine + contract.
+No guessed interfaces, temporary workers, fabricated engine responses, UI scoring
+or duplicate mechanics ontology. Both threads start only after parent accepts G1.
+Catalog/manifest **schemas** remain contract-owned; after acceptance, their
+**content**, hashes, attribution and fixture oracles belong to the engine thread.
 
-Dependency direction: web -> contract ONLY; engine -> contract; wasm -> engine
-and contract. No UI dependency on an unfinished engine. No temporary protocol,
-fake worker, duplicated scoring or mocked worker results in browser tests.
+All public assets resolve against one explicitly configured, same-origin base URL
+ending in `/`, including project-subpath hosting (for example `/aaru-engine/`).
+Never resolve assets against a route's current location or use root-absolute paths.
+No imported data supplies asset URLs. Production uses a dedicated trustworthy
+origin. IndexedDB namespacing prevents collisions, NOT access by other apps/scripts
+on that origin; path prefixes do not isolate storage. Local imports/preferences,
+source bytes and downloads must not leave the browser or enter logs/telemetry.
+No credentials, remote inventory persistence or account uploads.
 
-Fixed public assets: `fixtures/catalog.json`, `data/mechanics/manifest.json`.
-Dedicated module-worker entry: `pkg/aaru-wasm/worker.js` (WORKER_MODULE_PATH).
-Its generated loader imports/default-initializes `./aaru_wasm.js`; those bindings
-load colocated `aaru_wasm_bg.wasm`. Main generated loader is
-`pkg/aaru-web/main.js` (WEB_MODULE_PATH), importing/default-initializing
-`./aaru_web.js` and its `aaru_web_bg.wasm`. `web/index.html` and `web/styles.css`
-are source shell/style. Parent Rust build tooling generates the two minimal
-loaders; there is no authored JS source. Loaders only initialize Rust modules,
-never route messages or implement state/validation. UI creates a module Worker
-at WORKER_MODULE_PATH; do not point Worker directly at uninitialized binding glue.
-`aaru-wasm` owns `#[wasm_bindgen(start)] pub fn start_worker()` and Rust string
-message listeners. `aaru-web` owns `#[wasm_bindgen(start)] pub fn start_web()`.
-Both adapter packages produce `cdylib`/`rlib`; engine is a Rust library.
-These paths/adapter entrypoints are integration requirements, not a claim the
-files or adapter implementations already exist.
+Parent's Rust server binds loopback only and serves a generated allowlisted public
+asset root, **never the repository root**. Explicit paths, no directory listings,
+no symlink escapes, traversal/encoded traversal/backslash rejection, correct WASM
+MIME and non-root base-path/CSP tests are later real-server gates. CSP must permit
+only same-origin scripts/workers and WASM compilation, with no arbitrary inline
+application code, framing, objects or external assets.
 
-Fixed catalog IDs (the `SampleId` enum):
+| Asset | Base-relative path |
+| --- | --- |
+| Catalog | `fixtures/catalog.json` |
+| Mechanics manifest | `data/mechanics/manifest.json` |
+| Worker module loader | `pkg/aaru-wasm/worker.js` |
+| Worker generated bindings | `pkg/aaru-wasm/aaru_wasm.js` |
+| Main module loader | `pkg/aaru-web/main.js` |
 
-| ID | Account path | Mechanics |
+Parent build tooling generates minimal loaders that default-initialize colocated
+`aaru_wasm.js` / `aaru_web.js`, which load colocated `_bg.wasm` files. Loaders do
+not validate/route messages or implement state. UI constructs an actual module
+Worker at `WORKER_MODULE_PATH`, not uninitialized bindings. WASM adapter owns
+`#[wasm_bindgen(start)] pub fn start_worker()` and Rust message listeners; UI owns
+`#[wasm_bindgen(start)] pub fn start_web()`. Both produce cdylib/rlib. These are
+handoff requirements, not existing product implementations.
+
+Fixed sample IDs: `syn-welcome`, `syn-scarcity`, `syn-stress`, and
+`good-unsupported-preview`. Account paths are respectively
+`fixtures/canonical/<id>.json` for synthetic accounts and
+`fixtures/good/good-unsupported-preview.json` for the preview. Synthetic mechanics
+paths are `data/mechanics/synthetic/<id>.json`; preview has none. Catalog uses
+`Catalog`/`SampleEntry`/`MechanicsEntry`; manifest is `Vec<MechanicsEntry>`.
+Synthetic definitions use `syn:` prefixes, but prefixes never establish trust.
+
+## Transport, inventory and trust
+
+UTF-8 JSON text only, never JS objects/Number conversion for account/protocol
+values. `wire::decode` rejects duplicate properties (including escaped-equivalent
+keys), BOMs, trailing data, excessive depth/strings/containers/numbers before
+typed decode. Unknown fields are rejected. `wire::decode_request` also validates
+the full operation fingerprint and request budgets. Structural decoding is NOT
+contextual validation: worker must validate accounts, specs and results before
+work/emission. All four independent version newtypes currently accept integer 1
+only; no migrations or compatibility aliases. GOOD dialect is a separate upstream
+version; profile 1 does not certify any unverified dialect semantics.
+
+`Section` distinguishes omitted from supplied-empty. Completeness is exporter
+assertion, not a scanner audit. Optional progression/lock/stat fields mean unknown,
+not zero. u16 representation/positivity checks do not invent live progression caps.
+Engine validates source-backed progression, identity catalogs, compatibility and
+mechanics. Unsupported quantities retain inert lexemes; unknowns are not guessed.
+
+Character ID selects one definition/form. `CharacterAvailability::Resolved` names
+both canonical real identity and the one `AvailabilityId` for that owned resource.
+Definitions cannot repeat under distinct IDs; one real identity maps bijectively
+to one availability. Different supported forms may share that availability, never
+use it simultaneously. Engine must corroborate identity/form mappings against its
+supported catalog, not trust imported labels. Unknown relationships remain
+`Unknown`: affected whole-inventory or subset evaluation is blocked. The affected
+closure includes character owners of included weapons/artifacts, even when those
+owners are not selected. Shared movement validation also requires resolved owner
+and recipient availability before use. Excluding an owner cannot free its equipment.
+An excluded unknown character and its excluded equipment do not block unrelated
+supported subset evaluation. Equipment owner-slot conflicts, current loadouts, game-lock checks and pins also
+use availability, so selecting a form neither manufactures slots nor transfers
+gear between real owners. Comparison rejects a purported transfer between mutually
+exclusive forms; changing form is not an equipment move. `ResourceFootprint` must exactly match selected
+character IDs, availability IDs and physical item IDs across all simultaneous teams.
+
+All canonical character/item IDs are globally unique; item definitions are not
+copies. GOOD without stable upstream IDs uses original-byte SHA-256 snapshot ID
+`snapshot-<digest>` and `<digest>/characters/<index>`, `/weapons/<index>`,
+`/artifacts/<index>`. Identical weapons/artifacts remain distinct copies; repeated
+characters do not become additional ownership. Imports replace after confirmation;
+no guessed cross-import reconciliation. Preserve canonical IDs on restore.
+
+Unresolved external owners reserve equipment and occupy slots; omitted rosters do
+not create owners. Game lock is preserved separately from Aaru movement policy.
+Default policy protects known locked items; opt-in reassignment changes policy,
+not game data. Explicit protections, exclusions and pins stay binding. Pins reserve
+an item to its owner if used; they do not force participation. Engine additionally
+validates weapon legality, artifact rules and supported mechanical predicates.
+
+`SourceArchive` preserves exact original valid UTF-8 bytes, hash, format and source
+references. Source pointers are RFC 6901 (empty = document); engine verifies escaping,
+existence and record provenance. Source export returns identical bytes, never
+regenerated GOOD. Canonical export is `Backup`, not GOOD. Restore preserves the
+original archive, never recursively archives backup wrappers. Backup formatting
+need not survive; archive bytes, IDs, preferences and provenance must. No source
+archive means source export is explicitly unavailable.
+
+`ValidatedAccount` cannot deserialize its private trust marker. External raw
+accounts always use `imported`. Only the engine's bundled, hash-checked catalog
+loader uses `bundled`. GOOD cannot acquire synthetic trust. Synthetic mechanics
+require the exact trusted synthetic SampleId; synthetic accounts cannot use live
+mechanics. Backup sample metadata is NOT a trust assertion: `Backup::restore`
+requires a freshly trusted bundled reference of that SampleId and exact inventory
+hash, allowing only preferences to differ. Removing metadata yields an imported
+account, never synthetic permission. Modified sample inventory is rejected rather
+than silently relabelled. `with_preferences` validates and preserves existing trust.
+
+## Numeric and scoring semantics
+
+`Fixed` is signed i64 millionths. Wire values are canonical scaled-integer strings:
+`"39000"` means 0.039 units. No leading plus/zeroes or negative zero. Counter and
+epoch values are canonical u64 decimal strings; small counts/versions are numbers.
+Decimal/scientific imports are exact using checked i128 intermediates; inexact,
+overflow and malformed inputs are errors, not rounded/clamped zeros.
+`from_percentage_points("3.9")` is 0.039, only for verified percentage-point fields.
+Multiply/divide round once, nearest integer ties-to-even, symmetric across signs.
+Division by zero and narrowing overflow fail. Objective dot product accumulates
+all weighted products and rounds once at the end. Nonnegative weights need at
+least one positive term; weights are not automatically normalized. Positive-weight
+unavailable dimensions block scoring; zero-weight unavailable terms do not.
+
+Raw build metrics use engine-defined semantic keys/units under the mechanics
+revision. `Normalization` independently revisions all nine dimension ranges, units
+and higher/lower direction; engine verifies these against the dataset, not invented
+live math. `MetricRange::normalize` maps the declared low/high range affinely into
+[0,1], reversing lower-is-better metrics, with one final half-even division.
+Out-of-range raw values fail, never clamp. `ScoreVector` values are dimensionless
+normalized utilities in [0,1], all maximize, never DPS. Fidelity/provenance remain
+explicit. Global/character metric differences may be negative and are not utility
+vectors. Resource efficiency is explicit modeled resource cost, not a donor fudge.
+
+Each team contains its per-encounter ScoreVector. One to three explicit encounters
+represent simultaneous four-character teams. Allocation vector is their equal-weight
+arithmetic mean per dimension, rounded once; any unavailable term propagates.
+Aggregation uses worst fidelity and sorted union of provenance IDs. Objective is
+applied to the aggregate, not independently rounded scores summed afterwards.
+
+Pareto compares every dimension exactly; any unavailable dimension makes vectors
+incomparable, including identical unknown vectors. Never discard resource-distinct
+builds solely for local vector equality/dominance. `SearchStatus` describes search:
+Complete exhausts the declared feasible domain; Infeasible exhausts an empty one;
+Bounded has declared reached limits; Cancelled proves no optimum; unsupported is
+blocked, not infeasible. Build/team/allocation counters count admitted nodes, including
+nodes subsequently pruned. Check the budget before admitting the next node: every
+claimed reached limit must occur exactly at its corresponding maximum, never below
+or above it, with no duplicate claims. Exhaustion exactly at a budget can still be
+Complete if the domain is finished without cutting off another node; it then claims
+no reached limit. Presentation limit is not a search cutoff. `FrontierPresentation`
+separately says Exhaustive, Truncated with positive omitted frontier count, or
+AmongReturned. Global frontier claims require complete/infeasible search and
+comparable classified returned vectors. Unknown vectors use AmongReturned/Unknown.
+Dominated labels need returned witnesses; Frontier cannot have a returned dominator.
+Validation checks consistency, not the truth of exhaustive-search/pruning proofs.
+
+## Decisions and comparisons
+
+`DecisionSpec` makes assignment domain, mechanics, normalization, scope, objective,
+encounters, assumptions, hard constraints and search policy explicit. Engine
+rejects unsupported keys/rules/weighted dimensions, missing mechanics/progression
+and invalid combinations. No default combat assumptions. Shared validation checks
+exact footprints, slots, exclusions, pins, allowed artifact sets/main stats, metric
+minima, satisfied required-rule outcomes and objective/aggregate consistency.
+Engine still proves mechanics legality and safe pruning. Missing assigned weapon
+or artifacts means actually unassigned, not unknown equipped inventory.
+
+Rank descending presentation score, then ascending AllocationId bytewise. Engine
+IDs derive deterministically from canonical assignments, not timing. Sort keys
+bytewise, preserve encounter order. Causes precede effects; references must resolve.
+UI renders factual reason codes, localized uncertainty and assumptions without
+post-hoc invented explanations. Exact arithmetic is not verified game truth.
+
+`ComparisonSpec` has two distinct modes, never a silently changed world:
+
+- **CurrentLoadout**: one explicit validated party allocation with currently equipped
+  gear, including recipient. Intervention is `MoveOnly`: same parties/encounters and
+  unrelated gear, moved item on recipient, recipient's displaced gear unassigned,
+  donor loses item. Optional donor fallback must be a different unequipped legal,
+  permitted item of the same type/slot, used by a participating distinct donor.
+  No fallback means unassigned donor slot. No unrelated reoptimization is attributed
+  to this move. Fixed allocation and fallback are included in the after spec hash.
+- **UnrestrictedOptimum**: baseline Unrestricted; after ReservedMove under identical
+  account resources, policies, mechanics, normalization, objective and assumptions.
+  Recipient must participate and use the item. Donor/other builds may reoptimize and
+  their changes must be reported. This measures restriction/opportunity cost, not
+  ownership creating resources. A complete unrestricted optimum cannot improve by
+  restricting assignments, even if the restricted search is bounded.
+
+Both decisions validate against the SAME original trusted account; original source,
+ownership, locks and resources are unchanged. Exact before/after assignment footprints
+identify hypothetical use; no duplicate full ownership-map scaffolding. All selected
+characters (including unchanged controls), donor and recipient have explicit build
+references. `original_owner` preserves the imported owner ID. `DonorChange` binds its
+physical availability and all forms participating in either selected before/after
+allocation, each with its own build references. An alternate participating form must
+not be relegated to unrelated changes while loss is attributed to an absent form.
+If no donor form participates on either side, the imported owner has explicit empty
+build references instead. Fallback legality uses the participating before-form's
+availability, not exact imported form-ID membership. Global delta is after minus before best-returned score. ExactDifference
+requires both searches Complete; BestFoundDifference is not proven improvement;
+missing feasible sides require NotComparable and unavailable delta. Character raw
+metric deltas and causal/mechanical completeness remain engine proof obligations.
+
+Sensitivity varies only explicit assumptions/encounters, preserving all other fields,
+including normalization and assignments. At most 16 unique scenarios. Each full
+rerun, rank-change summary and subtraction is validated; no probabilistic confidence
+is invented. Marginal roster/investment operations are NOT implemented by equipment
+comparison; parent must track them explicitly in the release coverage matrix.
+
+## Authority, persistence and recovery
+
+Every envelope carries protocol version, request ID, account generation, RequestContext
+(session ID, worker incarnation, reset epoch, active account semantic digest, engine
+version/revision), operation fingerprint and payload. Fingerprint is SHA-256 of the
+compact Rust JSON tuple `["aaru-operation-v1", context, generation, request]`.
+Parent build metadata supplies identical engine version/revision to UI and worker;
+neither consumer guesses the other package's identity. Responses echo the operation
+fingerprint/context; transitions echo old context but carry new generation exactly
+old+1. UI updates active account semantics only on a matching
+transition with the expected snapshot/hash. All results additionally bind their full
+spec and account/engine reproducibility fingerprint. Hashes are integrity/context
+identifiers, not security signatures or evidence that a database transaction occurred.
+
+Exactly ONE authoritative foreground operation; no independent concurrent UI regions.
+New ordinary operations locally supersede old work. Cancel explicitly targets the
+current cancellable foreground request: import/preference preparation, export,
+catalog, evaluation, comparison or sensitivity. Unknown/noncurrent targets fail
+without displacing current work. Late preparation success cannot restore preview
+authority. Saving, activation, reset, recovery and session discard cannot be cancelled
+or ordinarily superseded. Worker retains at most one pending replacement, disposing
+superseded work, not accumulating requests. IDs/tokens cannot
+repeat within an incarnation (4,096 maximum); overflow/exhaustion is explicit.
+SessionGate rejects reversed completion, changed objectives/targets/specs, cancelled
+work, mismatched families/generations/fingerprints and duplicate terminal events.
+Worker independently enforces authority and cancels obsolete work. No stale preview
+or save can become authoritative just because its account generation still matches.
+
+Worker restart increments worker epoch and invalidates previews/work. Call
+`restart_worker` with the matching CommitMachine only after storage has settled;
+Writing blocks restart. The gate then accepts only Recover with the exact expected
+`RecoveryState`, not a replacement Reset or a caller-invented account. A new worker
+accepts that recovery context and retained UI generation as its incarnation bootstrap,
+validates/restores its payload, and acknowledges generation+1. Storage revision is
+NOT account generation; old-worker messages never bootstrap a new incarnation.
+New sessions use fresh session IDs. Generation/epoch increments cannot wrap.
+
+`RecoveryState::Durable` represents a successful durable read, including a revisioned
+tombstone or initial empty record. When a durable record is known, restart restores
+that record, not a session-only override; restoring the retained override is a later
+explicit prepare/restore operation. `CommitMachine::session_only` instead represents
+initially unavailable/unread IDB with no asserted durable record or revision.
+Preparation and explicit SessionOnly activation remain usable. Restart carries the
+retained backup as `RecoveryState::SessionOnly`, or None for an empty session; this
+is not a successful durable read. A recovered backup acknowledges Activated; an
+empty session acknowledges SessionDiscarded, never a durable ResetAcknowledged.
+Fresh trust validation still applies to recovered sample backups.
+
+`DiscardSession` is a separate memory-only action when storage was unavailable:
+advance the reset epoch through `discard_session_barrier`, drop retained private
+memory/candidates, then acknowledge SessionDiscarded at generation+1. Label it
+**Discard this session**, never **Clear local data**. Previously saved data might
+still exist in unread storage; do not claim it was removed. Durable clear requires
+an actual committed tombstone. No gate reconstruction is a recovery/reset operation.
+
+Persistence and worker memory are NOT one transaction. PreparedRegistry holds one
+validated inert candidate and complete `ImportPreview.backup`; invalid preparation
+preserves active state. Preparation binds source, account, preferences and trust.
+PreparePreferences uses `with_preferences` then the same preview/commit flow;
+PrepareImport/Restore and canonical Aaru files use `Backup::restore`, not raw flags.
+
+Primary tab must hold exclusive Web Lock `aaru-primary-v1` for its lifetime; secondary
+tabs and browsers without locks may show public help only, with no private account
+read/import/evaluate/export/write/reset. All private operations, including session-only,
+require primary ownership. Loss of ownership stops work. Browser proof remains open.
+
+Primary UI/worker adapters follow these ordered boundaries:
+
+1. Validate a prepared preview and get explicit replacement/preference confirmation.
+   `SessionGate::begin_prepared_save` binds CommitMachine to that exact authoritative
+   preview/epochs and reserves the foreground. No new import, objective, reset,
+   cancellation or other ordinary operation can start while saving/activating.
+   Activation is blocked while Writing, including SessionOnly or a prematurely
+   fabricated receipt. After gate/storage_committed only the exact matching
+   persisted activation is admitted, or a settled restart followed by recovery.
+2. In ONE IndexedDB transaction, compare the observed revision, replace the entire
+   DurableRecord (backup includes archive/preferences), and increment revision.
+   Transaction **complete** is the durable commit point, not request success.
+3. On confirmed abort/failure before commit, call gate/storage_failed; old durable
+   and active account remain usable. Offer retry, cancel, or explicit SessionOnly
+   activation. SessionOnly changes memory, never claims the durable save succeeded.
+   Reload restores old durable state; disclose this. Clear-local-data is never a
+   session-only operation: it needs a committed reset tombstone.
+4. Only after completion build the exact CommitReceipt and send ActivatePrepared /
+   Persisted. Registry verifies backup/record digest, revision, epochs and token,
+   then installs account and increments generation. Repeating the most recent same
+   token/context/disposition at the resulting worker generation is idempotent; stale
+   or changed acknowledgements fail. On lost acknowledgement, resend the identical
+   original envelope without replacing the registered transition. Worker checks this
+   exact replay before its ordinary stale-generation guard; registry `current` is
+   worker-owned current generation, not a caller-supplied claim. CommitMachine
+   activates committed memory separately.
+5. Interruption AFTER commit recovers the new durable account, even if worker
+   activation never acknowledged. While Writing, await transaction completion/abort
+   and reread IDB before recovery: a lost callback cannot tell memory what committed.
+   Settle storage before resetting/restarting/advancing commit epochs; never let an
+   old asynchronous transaction run across a new writable session. With a lost
+   callback, gate/settle_storage requires a successful read after the transaction
+   settles, exactly matching either the prior record (abort) or candidate (commit).
+   Another revision/payload is not proof of either outcome. Recovery while Writing
+   is rejected. Invalidate old candidates through CommitMachine as well as SessionGate.
+   Recovery rejects regressed revisions/epochs and different data at the same revision.
+6. Reset uses an explicit lifecycle:
+   - `reset_barrier` advances reset epoch immediately and invalidates preview/work
+     authority. `begin_reset_save` invalidates the storage candidate at that epoch
+     and begins one revisioned tombstone write. Armed/Writing block foreground work.
+   - Before any write starts, `abort_reset_before_save` releases Armed, including
+     unavailable-IDB failure. Confirmed transaction abort uses gate/storage_failed;
+     settled reread of the old record uses gate/settle_storage. Both release Writing,
+     preserve old durable/active state and restore evaluation/export at the advanced
+     reset epoch. Old previews never regain authority; no epoch rollback.
+   - Uncertain outcome stays Writing: no restart, reset retry, recovery, cancellation
+     or ordinary work until transaction settlement. A failed read is not settlement.
+   - gate/storage_committed or settled reread of the candidate records the tombstone.
+     `Request::Reset` then requires the exact committed record's matching receipt.
+     Clear worker memory/private caches/download URLs and acknowledge generation+1.
+   - If acknowledgement is lost, restart with the settled CommitMachine and Recover
+     that exact tombstone. Old-account and SessionOnly recovery are rejected; no
+     second clear transaction is required. ResetAcknowledged clears the barrier.
+     A committed tombstone must never resurrect the prior account.
+
+`CommitMachine` is a pure state-machine boundary. Its success does not establish
+IndexedDB/CAS/Web Lock/worker correctness. Real adapters must enforce the sequence,
+including never inventing receipts, settle writes before restart, and prohibit user
+actions during durable transitions. Activation failure after commit requires retry
+or recovery of the committed state, not silently restoring the prior account.
+
+## Bounded work and reproducibility
+
+| Surface | Bound |
+| --- | --- |
+| Original GOOD/source bytes | 16 MiB |
+| Escaped backup/wire transport | 128 MiB |
+| Characters / weapons / artifacts | 256 / 4,096 / 16,384 |
+| JSON depth / container entries / ordinary string bytes | 64 / 65,536 / 4,096 |
+| Numeric lexeme bytes / absolute exponent | 128 / 128 |
+| Prepared candidates / queued replacement | 1 / 1 |
+| Retained distinct private sources / extra caches | 2 (active + candidate) / 32 MiB |
+| Returned allocations / decision bytes | 128 (or lower max_results) / 16 MiB |
+| Reasons / issues, uncertainty, provenance entries | 1,024 / 128 each |
+| Scenarios | 16 |
+| Primitive work per slice / elapsed slice budget | 256 (or lower requested) / 4 ms |
+| Cancellation acceptance target | 50 ms |
+
+Only `text`/`utf8` allow wire-length strings; source/input/download contextual bounds
+still apply. No nested archive histories. Evict caches instead of exceeding budgets;
+cache entries include full semantic fingerprints. Import/serialization must also be
+bounded and cancellation-aware, not just combinatorial enumeration. A primitive
+cannot be an entire unbounded build/team expansion: split scans into resumable steps.
+Use SliceBudget before each primitive; yield through a real worker task (not a
+self-replenishing microtask), check cancellation before work and emission. A primitive
+must finish within 4 ms on declared supported reference workloads. Measure optimized
+production workers, enforce 50 ms cancel acceptance and no late authoritative result.
+These are acceptance requirements, NOT native timing evidence. SliceBudget only
+checks admission; it cannot split a synchronous helper. At the allowed 16 MiB source
+size, the actual current optimized WASM operation fingerprint took 56.1–66.5 ms and
+decode_request 77.2–91.9 ms in three sandboxed Chrome 156.0.8078.47 module-worker
+trials. Native release decoding took 53.497–55.766 ms. These separately measured
+synthetic-whitespace probes used the owned codec, not production UI/storage; exact
+provenance is in temporary `g1-budget-evidence.md`. Current hashing, codec, cloning
+and validation must not be assumed to be 4 ms primitives or safe DOM-thread work.
+The separate architecture review must freeze a realizable bulk/control transport and
+cancellation seam before consumer handoff. This repair does not redesign that seam,
+lower limits, weaken the 50 ms target, or establish production responsiveness.
+
+`account_semantic_digest` sorts records/pins/substats, removes source references,
+archive and provenance, retains IDs, availability, coverage, progression, ownership
+and policy. `snapshot_digest` hashes exact compact AccountSnapshot serialization;
+Backup::digest also includes sample binding. Spec hash includes all spec fields.
+Result hash is compact tuple `["aaru-result-v1", account_semantics, spec_digest,
+engine_version, engine_revision]`. BTreeMaps/Sets are ordered; vector order matters.
+No timestamps or timing in fingerprints.
+
+## Executable wire examples
+
+A partial backup, NOT an evaluable account:
+
+```json
+{"account":{"schema_version":1,"id":"empty-account","characters":{"coverage":"omitted"},"weapons":{"coverage":"supplied","completeness":"declared_partial","records":[]},"artifacts":{"coverage":"omitted"},"preferences":{"game_lock_policy":"protect_from_reassignment","protected_items":[],"pinned":[],"excluded_characters":[],"excluded_items":[]},"source_archive":null,"provenance":[]},"sample":null}
+```
+
+Catalog and bundled-sample requests, with independently computed tuple hashes.
+They do not claim fixture content or a worker already exists:
+
+```json
+{"protocol_version":1,"context":{"epochs":{"session":"example-session","worker":"0","reset":"0"},"account_semantics":null,"engine":{"version":"0.1.0","revision":"example-engine"}},"fingerprint":"19c72a551bea153aaf0484f564067565dbe2f6346f29b20cafbbd1914a14a792","request_id":"catalog-1","account_generation":"0","payload":{"type":"get_catalog"}}
+```
+
+```json
+{"protocol_version":1,"context":{"epochs":{"session":"example-session","worker":"0","reset":"0"},"account_semantics":null,"engine":{"version":"0.1.0","revision":"example-engine"}},"fingerprint":"4ad2f15d8d8e53bf17d3eea0d36ba55c40b48f5b8fd6f03375ba1797779f491e","request_id":"sample-1","account_generation":"0","payload":{"type":"prepare_import","input":{"type":"sample","id":"syn-welcome"}}}
+```
+
+## Evidence boundary and remaining gates
+
+Native contract tests exercise actual Rust validators, JSON/SHA-256 and pure state
+machines. They do not implement or mock an engine/browser to claim integration.
+Normative assignment/score records are contract inputs, not live game predictions.
+Independent arithmetic distance enumeration, signed hand cases, restriction relations,
+adversarial identities and commit-point failure schedules provide scoped oracles.
+Complete search and causal metric claims still need independent engine evidence.
+
+Repair evidence: 2026-10-27 UTC, Linux, Rust/Cargo 1.98.1; base HEAD
+`fd40cb828669236bd4097a96b68c310096173a9b` plus uncommitted contract work. Source/test
+manifest fingerprint is `de95d392cb66be1694d76d00605a6c268ed878434710fc13527fef35862d32c4`,
+using `sha256sum crates/aaru-contract/Cargo.toml crates/aaru-contract/src/*.rs
+crates/aaru-contract/tests/*.rs | sha256sum` from the repository root. No source
+changes followed the fault-restoration verification. Evidence below concerns this
+Rust boundary, not production browser/storage or live-game correctness.
+
+| Scoped claim | Independent oracle and actual boundary | Targeted sensitivity |
 | --- | --- | --- |
-| `syn-welcome` | `fixtures/canonical/syn-welcome.json` | `data/mechanics/synthetic/syn-welcome.json` |
-| `syn-scarcity` | `fixtures/canonical/syn-scarcity.json` | `data/mechanics/synthetic/syn-scarcity.json` |
-| `syn-stress` | `fixtures/canonical/syn-stress.json` | `data/mechanics/synthetic/syn-stress.json` |
-| `good-unsupported-preview` | `fixtures/good/good-unsupported-preview.json` | none; preview/export only |
+| Included equipment cannot bypass unknown owner availability | Weapon and artifact owner c7 excluded from c0–c3 subset: reject included/used gear; unrelated unequipped-copy control passes | Invert affected-owner closure; separately check recipient instead of donor availability: each fails `included_equipment_closes_unknown_owner_availability_without_blocking_unrelated_subsets` |
+| Donor fallback/loss use physical availability, imported owner remains provenance | Original c1 versus selected alternate c5; legal fallback and no-fallback controls, different before/after forms, misattribution and pseudo-transfer rejection | Exact-ID fallback; exact-ID donor report; omit same-availability transfer guard: each fails `donor_fallback_and_loss_follow_participating_forms_but_preserve_imported_owner` |
+| Reset abort restores usability at the advanced epoch | Confirmed abort keeps old active/durable account; Evaluate and Export then succeed; late preview stays rejected | Omit reset disarming: `confirmed_reset_abort_restores_usability_without_rolling_back_the_reset_epoch` fails |
+| Uncertain/committed reset cannot resurrect prior state | Writing blocks work/restart/recovery; exact settled old/candidate records resolve abort/commit; lost callback/ack then restart recovers tombstone without another write | Accept arbitrary newer settled record: `uncertain_reset_storage_stays_blocked_until_a_settled_read_proves_abort` fails; reject matching tombstone recovery: `committed_reset_survives_lost_acknowledgement_and_restart_without_another_clear` fails |
+| Unavailable IDB does not require a fictitious durable read | Initial SessionOnly activation, retained-backup restart, unavailable clear failure exit, explicit memory discard and empty-session restart | Invent revision-zero Durable recovery: `unavailable_idb_allows_initial_session_activation_restart_and_explicit_memory_discard` fails |
+| Foreground preparation/export are cancellable, durable transitions protected | Import/preferences/export/catalog passing-success controls, explicit Cancel and late-success rejection; saving/activation/reset/recovery reject supersession | Remove preparation from cancellable set: `foreground_preparation_export_and_catalog_are_explicitly_cancellable` fails |
+| Each reached search limit matches its counter | Each node family at 1/99/100/101 against 100; boundary passes, under/over fail, multiple/duplicate claims checked; presentation truncation separate | Replace equality with upper-bound-only check: `reached_search_limits_require_the_exact_admitted_node_boundary` fails at count 1 |
+| Cross-team uniqueness assertion is nonvacuous | Exact characters/availability/items, distinct physical-copy control passes; only reuse plus exact derived item-set change rejects | Permit already-seen weapons while retaining exact footprint collection: `cross_team_weapon_reuse_changes_only_the_physical_copy` fails at duplicate acceptance |
+| Numeric/scoring and assignment restrictions retain their scoped evidence | Signed hand arithmetic, independent distance oracle, finite restriction enumeration, normalization/unknown/frontier cases | Existing independent oracles retained; optimizer/mechanics proofs remain open |
 
-Synthetic definitions use `syn:` prefixes. Catalog files use `Catalog` /
-`SampleEntry` / `MechanicsEntry`; paths are bundled relative assets, never URLs
-from account files. Mechanics manifest uses `Vec<MechanicsEntry>`. Engine owns
-content hashes, fabrication labels, supported operations, diagnostic codes,
-oracle-case references and public mechanics ontology. Do not duplicate effect,
-formula, predicate, reaction or kit schemas in the web/contract crate.
+Each listed fault was applied alone, its named locked integration test executed
+with `cargo test -p aaru-contract --locked --test invariants <name> -- --exact`,
+and produced a behavioral assertion failure (exit 101), not a compile failure.
+All twelve faults were reverted exactly: SHA-256 of the five changed source files
+and invariant test file matched their pre-challenge values. Disposable raw outputs
+are `/tmp/aaru-g1-fault-{owner-scope,owner-move,donor-fallback,donor-report,
+pseudo-transfer,reset-abort,reset-recovery,reset-settlement,session-read,
+cancel-preparation,search-boundary,cross-team-copy}.log`.
 
-## Entry points and versioning
+After restoration, executed successfully:
+- `cargo fmt --all -- --check`
+- `cargo test --workspace --locked`: 34 contract, 18 parent-policy unit and
+  4 parent staged-boundary tests passed; none failed or were ignored.
+- `cargo clippy --workspace --all-targets --locked -- -D warnings`
+- `cargo clippy -p aaru-contract --target wasm32-unknown-unknown --all-targets --locked -- -D warnings`
+- `cargo check -p aaru-contract --target wasm32-unknown-unknown --locked`
+- `pre-commit run --all-files` (4.6.2): all four required hooks passed.
+- `cargo audit --deny warnings` (0.22.2): current 52-dependency lock graph passed.
+- `cargo deny --locked check` (0.20.2): advisories, bans, licenses and sources passed.
+- `cargo run -p aaru-repo-policy --locked -- framework-advisories`: passed.
 
-- `wire::decode_request(&str) -> ContractResult<WorkerRequest>`: strict structural
-  parsing plus request-level resource validation.
-- `wire::decode_account(&str) -> ContractResult<ValidatedAccount>`: canonical
-  import; always imported trust, even if it was a sample backup.
-- `wire::decode::<WorkerEvent>` and `wire::encode`: strict wire codec.
-- `AccountSnapshot::validate`, `ValidatedAccount::{imported,bundled}`,
-  `DecisionSpec::validate_for`, `Allocation::validate`,
-  `DecisionResult::validate_for`, `ComparisonResult::validate_for`,
-  `SensitivityResult::validate_for`: shared
-  identity, origin, assignment, numeric and result-context invariants.
-- `PreparedRegistry::{prepare,activate,clear}`: digest-bound, single-use prepared
-  candidate lifecycle. `SessionGate::{register,accept,generation}`: UI stale
-  event filtering, including objective changes within one generation.
-- `Fixed::{from_decimal,from_percentage_points,checked_add,checked_sub,
-  checked_mul,checked_div}`, `Objective::{validate,score}`,
-  `ScoreVector::{validate,pareto_against}`: shared numeric semantics.
-- `wire::{canonical_backup_digest,account_semantic_digest,decision_spec_digest,
-  result_fingerprint}`: reproducibility and storage acknowledgement hashing.
-- `ownership`: full physical-item ownership map for comparison worlds.
+These local executions are not hosted CI or G1 acceptance. Nothing has been staged
+or committed by this repair. Parent's staged diff fingerprint remained
+`a23b901b9df55b45f4a48bb66093e8622c25683e0f7c7d1dab5f5f6f099521ff`
+(`git diff --cached | sha256sum`) before/after the repair checks.
 
-AccountVersion, ProtocolVersion, CatalogVersion and ImportProfileVersion are
-independent newtypes, each currently serializing as JSON integer **1** and
-rejecting every other version. No migration/fallback. GOOD dialect version is a
-separate upstream number; profile revision 1 does NOT assert versions 1–3 all
-have verified semantics. Engine must reject unsupported dialects and unresolved
-profile semantics explicitly before normalization. Mechanics revision/hash/game
-version, engine version/revision, and objective/encounter/assumptions/search
-revisions are separate required fields. A changed semantic contract requires a
-coordinated version update and both consumers, not unilateral new fields.
-
-All structs/tagged enums reject unknown fields; optional scalar fields serialize
-as `null` and mean unsupplied, not zero/default. Unknown import extensions stay
-inert in `SourceArchive` with source references/diagnostics, not executable rules
-or ad-hoc web fields. `wire::decode` alone is structural; it is NOT a substitute
-for contextual validation. Worker calls the contextual validators before work
-and before emitting results. UI uses SessionGate before rendering events.
-
-## Inventory, preservation and trust
-
-`Section<T>` is either `{"coverage":"omitted"}` or supplied with completeness
-and records. Supplied empty is not omitted. Completeness is exporter-declared
-(`unspecified`, `declared_partial`, `declared_complete`), never a scanner audit.
-Missing progression remains `null`. Integer fields have u16 representation
-bounds and basic positivity checks only; engine owns source-backed progression
-relationships and eligibility. Do not invent live caps from representation bounds.
-
-Definition IDs are NOT physical IDs. All canonical character/item IDs must be
-globally unique. Exact canonical IDs survive backup restore. GOOD records without
-suitable upstream identity use snapshot-scoped IDs:
-`snapshot-<lowercase-source-sha256>` for snapshot identity and
-`<sha256>/characters/<zero-based-index>`, `<sha256>/weapons/<index>`,
-`<sha256>/artifacts/<index>` for instance IDs. The digest is the original UTF-8
-bytes, not normalized JSON. Identical records remain different copies. Imports
-replace snapshots after confirmation; no guessed cross-import reconciliation.
-
-OwnerRef distinguishes unequipped, resolved character and unresolved external
-owner. Unresolved owners reserve their items and occupy equipped slots just like
-known owners; they are never free search resources. Two equipped weapons or two
-artifacts in the same owner/slot are invalid, including unresolved owners.
-Missing owned-character sections must not manufacture characters to resolve keys.
-
-Game lock (`Option<bool>`) is preserved account data, distinct from Aaru
-preferences. Default `AllocationPreferences` protects known game-locked items
-from reassignment. User permission to allow reassignment changes only the Aaru
-policy, never `game_lock`. Explicit protections/pins/exclusions remain binding.
-A pinned item need not participate in a selected party; if used it must have the
-pinned owner. Unresolved external reservations cannot be overridden by the
-imported-lock policy. Engine additionally validates weapon compatibility,
-set/main-stat rules, derived-stat minima and mechanics constraints.
-
-`SourceArchive` contains the exact valid original UTF-8 source and SHA-256;
-whitespace, numeric spelling, extension fields and final newlines are preserved.
-It is private state and must never be logged/uploaded or included in public
-artifacts. SourceRef points into that archive. Shared checks verify digest and
-pointer shape; engine verifies RFC 6901 escaping, pointer existence and correct
-record provenance against the original strict parse. Original source export
-returns archive bytes unchanged, never regenerated GOOD. Canonical export is an
-Aaru backup, not a GOOD export, and includes preferences, IDs and the archive.
-On restore use the existing preserved source archive; do not nest a backup as a
-new archive recursively. Preserved source means the earliest archived inventory
-source, not the formatting of each subsequent Aaru backup wrapper. Aaru backups
-promise canonical ID/policy/archive preservation, not byte-identical wrapper
-formatting. If no archive exists, source export is blocked explicitly.
-
-Raw input is bounded before parse: 16 MiB UTF-8 file, depth 64, 256 characters,
-4,096 weapons, 16,384 artifacts, 4,096-byte ordinary strings and 128 rendered
-issues. Wire/backup transport is bounded at 128 MiB (escaping source text expands
-it); the only long-string field names are `text` and `utf8`, still capped at
-128 MiB at the codec; contextual validation caps archived original source and
-GOOD file text at 16 MiB. Containers cap at 65,536 entries; no trailing data/BOM, duplicate object
-properties (including escaped-equivalent names), coercion or silent clamping.
-GOOD import text requires its own strict parse after outer-message parsing.
-Canonical backup restore is a structured backup decode (`wire::decode_account`),
-not re-archiving it as a raw GOOD file; `PrepareImport/File` with format `aaru`
-and storage restore use the 128 MiB wire/backup limit. That expansion allowance
-is for complete backups containing escaped original source, not a larger GOOD
-raw-input allowance. The outer message must also fit the wire budget; oversize
-inputs fail explicitly and never truncate.
-
-Invalid input never replaces active state. Unsupported but preserved inventory
-is distinct from evaluable inventory. `EvaluationCapability` names operations,
-scope and blockers. A missing/unavailable stat is not an evaluable zero.
-`ImportedQuantity::Unsupported` retains its original lexeme inertly.
-
-**Synthetic isolation:** ValidatedAccount is non-deserializable and its trust
-marker is private. Every external GOOD/canonical import uses `imported`.
-Only the engine's bundled, hash-checked catalog loader calls `bundled` after
-`ImportInput::Sample`; import text cannot name a trust marker. Synthetic mechanics
-must match that exact synthetic SampleId. GOOD archives cannot acquire synthetic
-trust even through `bundled`. Synthetic samples cannot use live mechanics.
-`good-unsupported-preview` never permits synthetic mechanics. Reloading an
-exported synthetic backup does not restore synthetic trust: ask the player to
-load the bundled sample again. Imported definitions resembling synthetic IDs
-remain imported and blocked; never infer trust from IDs/provenance labels.
-
-## Shared numerical rules
-
-Fixed represents signed i64 millionths: range
--9,223,372,036,854.775808 through 9,223,372,036,854.775807 units. The wire is the
-canonical signed **scaled-integer decimal string**, e.g. `"39000"` means 0.039,
-not 39,000 units. No leading plus/zeroes or negative zero. Counter/generation
-uses canonical u64 decimal strings. Small bounded counts/version integers are
-JSON numbers; scaled quantities never pass through JS Number.
-
-Decimal lexemes are converted exactly, including scientific notation, using
-checked i128 intermediates; inexact millionths, overflow and malformed input are
-errors, never rounded to zero. Preserve unsupported values via ImportedQuantity.
-`from_percentage_points("3.9")` is 0.039 (`"39000"` scaled). The GOOD importer
-may use that conversion only after verifying that field's percentage convention.
-
-Add/subtract are exact with range checks. Multiply divides the i128 product by
-1,000,000; divide multiplies the numerator by 1,000,000. Each rounds once, nearest
-integer, ties to even, symmetric for negative values. Division by zero and
-narrowing overflow are errors. No saturation, epsilon, floating ranking or
-platform-dependent rounding. The objective dot product accumulates all weighted
-products with checked i128 addition and rounds **once at the end**. Weights are
-nonnegative, at least one positive; they are not implicitly normalized.
-Unavailable dimensions with positive weight block scoring; zero weights do not.
-Engine-specific formula rounding boundaries belong to the engine's versioned
-mechanics model, using these primitives only at declared boundaries.
-
-All nine ScoreVector keys must exist. All maximize; engine defines dimension
-normalization/provenance under its dataset revision. Pareto comparisons use exact
-integers; unknown dimensions make vectors incomparable. Frontier/Dominated status
-is among the returned allocations, not proof about unsearched space. Global
-search completeness is separate. A comparative presentation score is not DPS.
-Resource efficiency is explicit modeled cost, not a guessed donor penalty.
-
-## Decisions, assignments, comparison and evidence
-
-DecisionSpec makes mechanics, scope, objective, encounters, assumptions,
-constraints and deterministic search limits explicit. One to three encounters
-means one to three simultaneous four-character teams. Engine rejects unknown
-assumption/encounter keys, unsupported weighted metrics, unmet required rules,
-invalid progression and missing mechanics. No default combat assumptions.
-
-BuildAssignment identifies character, optional weapon, exact artifact slots,
-raw metrics and causal reasons. Optional weapon/missing artifacts means actually
-unassigned, NOT unknown equipped gear; engine may evaluate such a build only if
-its declared scope/mechanics support it. Each Allocation lists exact teams and
-ResourceFootprint. Shared checks reject duplicate physical resources, wrong
-artifact slots, false footprints, wrong objective scores and failed hard
-constraints. Mechanics legality, completeness of constraints and safe pruning
-remain engine proof obligations, not properties Serde can establish.
-
-Rank by descending presentation score, then ascending AllocationId bytewise.
-Engine IDs must be deterministic functions of sorted canonical assignments,
-not enumeration timing. Sort character/item/build/team keys bytewise; preserve
-encounter order. CausalReason causes precede effects (no cycles/dangling causes),
-and reason IDs attached to results must resolve. ReasonCode is stable and factual;
-UI renders plain-English consequences, not invented post-hoc explanations.
-LocalizedUncertainty attaches fidelity/assumptions/sources to an actual component.
-Origin and fidelity are independent; exact arithmetic is not verified game truth.
-
-Complete means exhaustive within declared scope/constraints, including globally
-necessary alternate builds and all unique resource conflicts. Infeasible means
-exhaustive with no feasible allocation. Bounded means best found, with limits;
-Cancelled may retain partial allocations but proves no optimum. Unsupported
-mechanics is a separate blocked status. Counters are actual work, not invented
-percentages. Bounds require rule provenance. Result validation checks consistency,
-not the truth of an engine's claimed search proof. No top-N/greedy shortcut may
-be labeled complete. Max results is a presentation bound, not a search cutoff.
-
-ComparisonResult includes complete before/after decisions AND full ownership
-maps for all physical items, original owner, recipient, donor (when resolved),
-other affected characters, replacements through build IDs, global delta and
-causal paths. Baseline spec is unchanged. The engine applies the requested move,
-reserves it to the recipient, reoptimizes donor replacements/artifacts/third-party
-competition and evaluates the hypothetical account. Original source and game
-locks are unchanged. After fingerprint hashes that hypothetical ownership.
-Use `ComparisonResult::validate_for` against the original trusted account. It
-checks complete ownership maps, movement protections, explicit donor identity,
-contextual before/after validation and the global score subtraction.
-A ProvenWithinDeclaredDomain claim requires both searches Complete; Bounded
-comparisons must say BestFoundDifference, not proven account improvement.
-Character metric deltas and causal completeness still require engine evidence.
-
-Sensitivity passes explicit scenario assumptions and encounter replacements.
-The baseline objective, mechanics, scope, constraints and search policy stay
-fixed. Each ScenarioResult contains the full rerun and ranking-change/global-delta
-summary; shared validation checks context, ranked IDs and score subtraction.
-Engine must establish causal/mechanics validity of the reruns. No probabilistic confidence is
-invented from scenarios. At most 16 uniquely identified scenarios per request.
-
-Reproducibility excludes timing. account_semantic_digest sorts record IDs and
-pins, clears source references/archive/provenance, sorts artifact substats and
-retains progression, ownership, section coverage and policy. Spec digest hashes
-compact Rust JSON (BTreeMap/BTreeSet ordered, vector order meaningful). Result
-fingerprint hashes the compact JSON tuple
-`["aaru-result-v1", account_semantic_digest, decision_spec_digest,
-engine_version, engine_revision]`. canonical_backup_digest instead hashes exact
-compact AccountSnapshot serialization, including archive/provenance, for the
-storage acknowledgement. Hashes are lowercase SHA-256, not security signatures.
-
-## Protocol lifecycle
-
-Every envelope has protocol_version, request_id, account_generation and payload.
-Initial generation is `"0"`, with no active account. Requests for inventory work
-without an active account receive a structured InvalidInput error. IDs are
-unique per session (maximum 4,096); reload creates a new worker/session.
-
-GetCatalog does not activate a sample. PrepareImport validates into a preview
-with token, full canonical account, digest, issues, capability and trusted sample
-indicator. It does not mutate the active account. New successful prepare replaces
-the prior candidate; invalid preparation leaves the prior usable state intact.
-Token binds current generation and exact canonical backup digest. Persisted
-activation requires UI's successful namespaced IndexedDB transaction for that
-same backup; storage failure instead offers explicit SessionOnly or abort.
-Never send Persisted before the transaction completes. PreparedRegistry consumes
-only a successful matching activation. Reset clears prepared candidates.
-
-All ordinary responses echo request generation. Activated/ResetAcknowledged
-carry **new generation = previous + 1**, plus previous_generation; the UI accepts
-that transition only for its pending matching request. Reset cannot wrap a u64.
-Activation/reset cancels old computations and invalidates old tokens. A failed
-transition emits Error at the unchanged generation. Clear only Aaru storage;
-engine worker reset and UI download/object-URL cleanup are real responsibilities.
-
-Evaluate/Compare/Sensitivity emit Progress followed by their terminal family or
-Error. Cancellation targets a request ID and acknowledges whether it was running;
-unknown targets report was_running=false. A cancellation acknowledgement does
-not certify that work was exhaustive. UI immediately invalidates the target.
-SessionGate also rejects results from superseded objectives in the SAME generation,
-unsolicited transitions, stale generations, wrong response families and duplicate
-terminals. Once a transition is pending, UI must not offer new decision actions
-until it succeeds/fails. Engine must independently reject stale requests/tokens.
-
-Export returns Download (UTF-8 text, literal filename, MIME type, digest). UI
-creates a local download and verifies export/reset boundaries in real-browser
-Rust tests. Never treat filename as a path or imported strings as HTML. Errors
-have stable IssueCode, bounded structured issues and recoverability; player copy
-must explain the problem and recovery. Do not expose internal account text in
-errors. ContractError is for native validation; ProtocolError is the transport.
-
-## Serialized examples (compiled by contract tests)
-
-Minimal partial canonical backup (not an evaluable account):
-
-```json
-{"schema_version":1,"id":"empty-account","characters":{"coverage":"omitted"},"weapons":{"coverage":"supplied","completeness":"declared_partial","records":[]},"artifacts":{"coverage":"omitted"},"preferences":{"game_lock_policy":"protect_from_reassignment","protected_items":[],"pinned":[],"excluded_characters":[],"excluded_items":[]},"source_archive":null,"provenance":[]}
-```
-
-```json
-{"protocol_version":1,"request_id":"catalog-1","account_generation":"0","payload":{"type":"get_catalog"}}
-```
-
-```json
-{"protocol_version":1,"request_id":"sample-1","account_generation":"0","payload":{"type":"prepare_import","input":{"type":"sample","id":"syn-welcome"}}}
-```
-
-```json
-{"protocol_version":1,"request_id":"import-1","account_generation":"0","payload":{"type":"prepare_import","input":{"type":"file","format":"good","text":"{\"format\":\"GOOD\",\"version\":3,\"source\":\"Example\"}"}}}
-```
-
-```json
-{"protocol_version":1,"request_id":"activate-1","account_generation":"0","payload":{"type":"activate_prepared","token":"prepared-1","storage":{"type":"session_only"}}}
-```
-
-The digest below is syntactically valid example metadata, not an assertion that
-a mechanics fixture already exists. The decision specification is explicit;
-the actual engine may reject it for absent dataset/coverage.
-
-```json
-{"protocol_version":1,"request_id":"evaluate-1","account_generation":"1","payload":{"type":"evaluate","spec":{"mechanics":{"origin":"synthetic","sample":"syn-welcome","revision":"syn-v1","sha256":"0000000000000000000000000000000000000000000000000000000000000000"},"scope":{"type":"whole_supplied_inventory"},"objective":{"revision":"objective-v1","label":"Balanced","weights":{"output_potential":"1000000"}},"encounters":[{"revision":"encounter-v1","definition":"syn:encounter/one","label":"Sample target","target_count":1,"parameters":{},"provenance":[]}],"assumptions":{"revision":"assumptions-v1","values":{}},"constraints":{"required_characters":[],"excluded_characters":[],"excluded_items":[],"pinned_assignments":[],"allowed_sets":{},"allowed_main_stats":{},"metric_minima":{},"required_rules":[]},"search":{"revision":"search-v1","max_build_nodes":"100","max_team_nodes":"100","max_allocation_nodes":"100","max_results":10,"work_units_per_slice":10}}}}
-```
-
-```json
-{"protocol_version":1,"request_id":"compare-1","account_generation":"1","payload":{"type":"compare","baseline":{"mechanics":{"origin":"synthetic","sample":"syn-welcome","revision":"syn-v1","sha256":"0000000000000000000000000000000000000000000000000000000000000000"},"scope":{"type":"whole_supplied_inventory"},"objective":{"revision":"objective-v1","label":"Balanced","weights":{"output_potential":"1000000"}},"encounters":[{"revision":"encounter-v1","definition":"syn:encounter/one","label":"Sample target","target_count":1,"parameters":{},"provenance":[]}],"assumptions":{"revision":"assumptions-v1","values":{}},"constraints":{"required_characters":[],"excluded_characters":[],"excluded_items":[],"pinned_assignments":[],"allowed_sets":{},"allowed_main_stats":{},"metric_minima":{},"required_rules":[]},"search":{"revision":"search-v1","max_build_nodes":"100","max_team_nodes":"100","max_allocation_nodes":"100","max_results":10,"work_units_per_slice":10}},"movement":{"item":"w0","recipient":"c0"}}}
-```
-
-```json
-{"protocol_version":1,"request_id":"sensitivity-1","account_generation":"1","payload":{"type":"sensitivity","baseline":{"mechanics":{"origin":"synthetic","sample":"syn-welcome","revision":"syn-v1","sha256":"0000000000000000000000000000000000000000000000000000000000000000"},"scope":{"type":"whole_supplied_inventory"},"objective":{"revision":"objective-v1","label":"Balanced","weights":{"output_potential":"1000000"}},"encounters":[{"revision":"encounter-v1","definition":"syn:encounter/one","label":"Sample target","target_count":1,"parameters":{},"provenance":[]}],"assumptions":{"revision":"assumptions-v1","values":{}},"constraints":{"required_characters":[],"excluded_characters":[],"excluded_items":[],"pinned_assignments":[],"allowed_sets":{},"allowed_main_stats":{},"metric_minima":{},"required_rules":[]},"search":{"revision":"search-v1","max_build_nodes":"100","max_team_nodes":"100","max_allocation_nodes":"100","max_results":10,"work_units_per_slice":10}},"scenarios":[{"id":"scenario-1","label":"Alternative assumptions","assumptions":{"revision":"assumptions-v2","values":{"syn:rotation/seconds":{"type":"quantity","value":"24000000"}}},"encounters":[{"revision":"encounter-v1","definition":"syn:encounter/one","label":"Sample target","target_count":1,"parameters":{},"provenance":[]}]}]}}
-```
-
-```json
-{"protocol_version":1,"request_id":"export-1","account_generation":"1","payload":{"type":"export","format":"canonical"}}
-```
-
-```json
-{"protocol_version":1,"request_id":"cancel-1","account_generation":"1","payload":{"type":"cancel","target":"evaluate-1"}}
-```
-
-```json
-{"protocol_version":1,"request_id":"reset-1","account_generation":"1","payload":{"type":"reset"}}
-```
-
-```json
-{"protocol_version":1,"request_id":"evaluate-1","account_generation":"1","payload":{"type":"progress","progress":{"phase":"allocation","completed_units":"12","total_units":null,"counters":{"build_nodes":"80","team_nodes":"24","allocation_nodes":"12","pruned_nodes":"3"}}}}
-```
-
-```json
-{"protocol_version":1,"request_id":"reset-1","account_generation":"2","payload":{"type":"reset_acknowledged","previous_generation":"1"}}
-```
-
-```json
-{"protocol_version":1,"request_id":"evaluate-1","account_generation":"1","payload":{"type":"error","error":{"code":"unsupported_mechanics","message":"This account cannot be evaluated with the selected mechanics.","issues":[],"recoverable":true}}}
-```
-
-## Evidence and remaining gates
-
-Contract tests use real Serde/JSON/SHA-256 and public validators, no engine or
-browser substitutes. Independent numeric oracles include signed hand-calculated
-half-even cases and nearest-candidate distance enumeration. Fault cases exercise
-copy reuse across teams, false footprints, unknown dimensions, source changes,
-stale objectives/generations, cancelled results, mismatched import digests,
-synthetic trust, incomplete search claims and dangling/cyclic reasons. These
-support only shared boundary claims, not importer/game/search/browser correctness.
-Serialized examples above are executable tests, not fabricated worker results.
-
-Executed sensitivity challenges (native Rust 1.98.1): changing ties-to-even parity
-from odd to even made the hand-calculated boundary, independent distance oracle
-and single-round weighting tests fail (3 failures); inverting the ordinary-event
-generation guard made the UI stale-event test fail on an old-generation event.
-Both deliberate faults were reverted immediately; no fault is part of the
-contract. These establish sensor sensitivity to those two faults only.
-
-Executed freeze gates: `cargo fmt --all`; `cargo test --workspace --locked`
-(16 contract invariant tests and 10 concurrent repository-policy tests, no failed
-or ignored tests); `cargo clippy --workspace --all-targets --locked -- -D warnings`;
-`cargo check -p aaru-contract --target wasm32-unknown-unknown --locked`; and
-`pre-commit run --all-files` all passed. Pre-commit's JSON file hook had no
-applicable files; no tests/hooks were disabled or bypassed. The parent-owned
-policy source changed concurrently; those test results describe the working tree
-at execution, not a claim that parent changes are included in this contract
-commit. Initial baseline at e8bff95 had seven policy tests passing.
-
-Engine still owes pinned GOOD profile verification, mechanics coverage and
-independent search/counterfactual oracles. UI still owes real production-worker,
-file/storage/download/reset, accessibility and privacy executions. Native Windows,
-production WASM/browser, hosted security/performance and release evidence remain
-separate gates. The contract freeze is not a recommendation release.
+Remaining gates: bulk codec/control-plane architecture and measured optimized
+production responsiveness; native/WASM runtime parity; real worker/CSP/subpath/server
+privacy; IndexedDB completion/abort/CAS/reload; Web Locks/two tabs; files/downloads/reset;
+accessibility; hosted Linux/Windows/security enforcement; verified mechanics/release
+coverage matrix. Compilation for wasm32 is not runtime parity or browser evidence.
+G1 is not accepted and engine/UI implementation must not start until parent review.

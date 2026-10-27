@@ -1,2 +1,1 @@
-# External framework explicitly required by the project owner; no project Python code.
 pre-commit==4.6.2

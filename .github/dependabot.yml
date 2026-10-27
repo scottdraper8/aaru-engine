@@ -1,7 +1,5 @@
 version: 2
 updates:
-  # Zero disables routine Cargo version PRs, not vulnerability-fix PRs.
-  # Security alerts/security updates are also enabled in repository settings.
   - package-ecosystem: cargo
     directory: /
     schedule:
@@ -13,8 +11,6 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
-  # pre-commit is an explicitly required external framework, not project code.
-  # Its complete dependency graph is exact-pinned with hashes in this directory.
   - package-ecosystem: pip
     directory: /.github
     schedule:

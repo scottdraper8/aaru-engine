@@ -7,13 +7,13 @@
 !.env.sample
 private-data/
 *.good.json
+*.aaru.json
 
 # Tooling and generated files
 node_modules/
 target/
 web/pkg/
 .site/
-playwright-report/
 test-results/
 .agent-docs/tmp/
 .venv/

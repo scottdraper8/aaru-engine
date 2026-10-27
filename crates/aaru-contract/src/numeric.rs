@@ -1,7 +1,8 @@
-//! Millionth-unit values. Wire strings contain the signed scaled integer, not a float.
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error};
 
 pub const SCALE: i128 = 1_000_000;
+pub const MAX_DECIMAL_BYTES: usize = 128;
+pub const MAX_EXPONENT: i32 = 128;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NumericError {
@@ -53,11 +54,9 @@ impl Fixed {
             i128::from(other.0),
         )?)
     }
-    /// Exact decimal conversion, including scientific notation. Never rounds imports.
     pub fn from_decimal(lexeme: &str) -> Result<Self, NumericError> {
         decimal(lexeme, 6)
     }
-    /// Decimal percentage points (3.9 -> 0.039), without intermediate rounding.
     pub fn from_percentage_points(lexeme: &str) -> Result<Self, NumericError> {
         decimal(lexeme, 4)
     }
@@ -69,7 +68,6 @@ fn narrow(value: i128) -> Result<Fixed, NumericError> {
         .map_err(|_| NumericError::Overflow)
 }
 
-/// Nearest integer, ties to even, symmetric for either sign. No saturating arithmetic.
 pub fn round_ratio(numerator: i128, denominator: i128) -> Result<i128, NumericError> {
     if denominator == 0 {
         return Err(NumericError::DivisionByZero);
@@ -82,7 +80,6 @@ pub fn round_ratio(numerator: i128, denominator: i128) -> Result<i128, NumericEr
         .ok_or(NumericError::Overflow)?;
     let remainder = r.unsigned_abs();
     let divisor = denominator.unsigned_abs();
-    // Comparing r with d-r avoids overflowing 2*r.
     if remainder > divisor - remainder || (remainder == divisor - remainder && q % 2 != 0) {
         q.checked_add(if (numerator < 0) == (denominator < 0) {
             1
@@ -96,11 +93,21 @@ pub fn round_ratio(numerator: i128, denominator: i128) -> Result<i128, NumericEr
 }
 
 fn decimal(text: &str, precision: i32) -> Result<Fixed, NumericError> {
-    if text.is_empty() || text.len() > 128 {
+    if text.is_empty() || text.len() > MAX_DECIMAL_BYTES {
         return Err(NumericError::Syntax);
     }
     let (mantissa, exponent) = match text.split_once(['e', 'E']) {
-        Some((m, e)) => (m, e.parse::<i32>().map_err(|_| NumericError::Syntax)?),
+        Some((m, e)) => {
+            let digits = e.strip_prefix(['+', '-']).unwrap_or(e);
+            if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+                return Err(NumericError::Syntax);
+            }
+            let exponent = e.parse::<i32>().map_err(|_| NumericError::Overflow)?;
+            if exponent.unsigned_abs() > MAX_EXPONENT as u32 {
+                return Err(NumericError::Overflow);
+            }
+            (m, exponent)
+        }
         None => (text, 0),
     };
     let (negative, unsigned) = match mantissa.strip_prefix('-') {

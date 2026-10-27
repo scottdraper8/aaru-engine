@@ -1,4 +1,5 @@
-//! Repository-specific supply-chain and check-integrity validation.
+mod framework_security;
+mod hygiene;
 
 use regex::Regex;
 use serde_json::Value as Yaml;
@@ -33,9 +34,10 @@ static SENSITIVE: LazyLock<Regex> = LazyLock::new(|| {
         r"(?i)(?:^|/)(?:\.env(?:\..*)?|auth\.json|credentials\.json|",
         r"service-account[^/]*\.json|[^/]*-credentials\.json|",
         r"secrets\.(?:json|ya?ml|toml)|vault\.yaml|id_(?:rsa|ed25519|ecdsa)[^/]*|",
-        r"\.netrc|\.npmrc|\.pypirc|private-data|node_modules|vendor|",
+        r"\.netrc|\.npmrc|\.pypirc|\.DS_Store|Thumbs\.db|Desktop\.ini|private-data|node_modules|",
+        r"bower_components|vendor|\.npm|\.yarn|\.pnp\.[^/]*|",
         r"\.venv|__pycache__|dist|build|out|\.idea|\.vscode|target|web/pkg|\.site)",
-        r"(?:/|$)|\.(?:pem|key|p12|pfx|pyc|o|so|dylib)$"
+        r"(?:/|$)|\.(?:good\.json|aaru\.json|pem|key|p12|pfx|pyc|o|so|dylib|swp|swo)$|~$"
     ))
     .unwrap()
 });
@@ -108,6 +110,17 @@ fn permissions_are_read_only(value: &Yaml) -> bool {
     }
 }
 
+fn runs_unconditionally(job: &Yaml, command: &str) -> bool {
+    job.get("steps")
+        .and_then(Yaml::as_array)
+        .is_some_and(|steps| {
+            steps.iter().any(|step| {
+                step.get("if").is_none()
+                    && step.get("run").and_then(Yaml::as_str).map(str::trim) == Some(command)
+            })
+        })
+}
+
 fn workflow(name: &str, document: &Yaml, errors: &mut Vec<String>) {
     let privileged_trigger = document.get("on").is_some_and(|events| {
         events.as_str() == Some("pull_request_target")
@@ -140,6 +153,78 @@ fn workflow(name: &str, document: &Yaml, errors: &mut Vec<String>) {
         return;
     };
     if name == ".github/workflows/ci.yml" {
+        for (id, commands) in [
+            (
+                "native",
+                &[
+                    "python -m pip install --require-hashes --only-binary=:all: -r .github/requirements-precommit.txt",
+                    "python -m pre_commit run --all-files --show-diff-on-failure",
+                ][..],
+            ),
+            (
+                "supply-chain",
+                &[
+                    "cargo audit --deny warnings",
+                    "cargo deny --locked check",
+                    "cargo run --locked --quiet -p aaru-repo-policy -- framework-advisories",
+                ][..],
+            ),
+        ] {
+            if let Some(job) = jobs.get(id) {
+                for command in commands {
+                    if !runs_unconditionally(job, command) {
+                        issue(errors, name, format!("{id} must always run {command}"));
+                    }
+                }
+            } else {
+                issue(errors, name, format!("missing required {id} job"));
+            }
+        }
+        let native = jobs.get("native");
+        if !native
+            .and_then(|job| job.get("steps"))
+            .and_then(Yaml::as_array)
+            .is_some_and(|steps| {
+                steps.iter().any(|step| {
+                    step.get("if").is_none()
+                        && step
+                            .get("uses")
+                            .and_then(Yaml::as_str)
+                            .is_some_and(|action| action.starts_with("actions/setup-python@"))
+                })
+            })
+        {
+            issue(
+                errors,
+                name,
+                "native must install an exactly pinned Python runtime",
+            );
+        }
+        let matrix = native
+            .and_then(|job| job.get("strategy"))
+            .and_then(|strategy| strategy.get("matrix"));
+        let platforms = matrix
+            .and_then(|matrix| matrix.get("os"))
+            .and_then(Yaml::as_array);
+        let bound_platforms = native
+            .and_then(|job| job.get("runs-on"))
+            .and_then(Yaml::as_str)
+            == Some("${{ matrix.os }}")
+            && matrix.is_some_and(|matrix| matrix.get("exclude").is_none())
+            && platforms.is_some_and(|platforms| {
+                ["ubuntu-", "windows-"].into_iter().all(|prefix| {
+                    platforms
+                        .iter()
+                        .any(|platform| platform.as_str().is_some_and(|s| s.starts_with(prefix)))
+                })
+            });
+        if !bound_platforms {
+            issue(
+                errors,
+                name,
+                "native matrix must execute both Linux and Windows",
+            );
+        }
         let gate = jobs
             .iter()
             .find(|(_, job)| job.get("name").and_then(Yaml::as_str) == Some("Quality gate"));
@@ -219,7 +304,10 @@ fn workflow(name: &str, document: &Yaml, errors: &mut Vec<String>) {
                 format!("{label} must not elevate token permissions"),
             );
         }
-        if job.get("continue-on-error").and_then(Yaml::as_bool) == Some(true) {
+        if job
+            .get("continue-on-error")
+            .is_some_and(|value| value.as_bool() != Some(false))
+        {
             issue(errors, name, format!("{label} cannot ignore failure"));
         }
         let Some(steps) = job.get("steps").and_then(Yaml::as_array) else {
@@ -283,8 +371,33 @@ fn workflow(name: &str, document: &Yaml, errors: &mut Vec<String>) {
                     format!("{label}: action needs an immutable SHA: {action}"),
                 );
             }
-            if step.get("continue-on-error").and_then(Yaml::as_bool) == Some(true) {
+            if step
+                .get("continue-on-error")
+                .is_some_and(|value| value.as_bool() != Some(false))
+            {
                 issue(errors, name, format!("{label} cannot ignore step failures"));
+            }
+            if let Some(action) = step.get("uses").and_then(Yaml::as_str) {
+                let version_key = if action.starts_with("actions/setup-python@") {
+                    Some("python-version")
+                } else if action.starts_with("dtolnay/rust-toolchain@") {
+                    Some("toolchain")
+                } else {
+                    None
+                };
+                if let Some(key) = version_key
+                    && !step
+                        .get("with")
+                        .and_then(|options| options.get(key))
+                        .and_then(Yaml::as_str)
+                        .is_some_and(|version| EXACT.is_match(version))
+                {
+                    issue(
+                        errors,
+                        name,
+                        format!("{label}: {key} needs an exact version"),
+                    );
+                }
             }
             if step
                 .get("uses")
@@ -337,8 +450,10 @@ fn inspect_text(name: &str, text: &str) -> Vec<String> {
     {
         issue(&mut errors, name, "executable hook or lint bypass");
     }
-    if matches!(extension, "py" | "js" | "mjs" | "ts" | "tsx" | "jsx")
-        || path.file_name().and_then(|s| s.to_str()) == Some("package.json")
+    if matches!(
+        extension,
+        "py" | "js" | "mjs" | "ts" | "tsx" | "jsx" | "sh" | "bash" | "ps1" | "bat" | "cmd"
+    ) || path.file_name().and_then(|s| s.to_str()) == Some("package.json")
     {
         issue(
             &mut errors,
@@ -395,66 +510,119 @@ fn inspect_text(name: &str, text: &str) -> Vec<String> {
                 };
                 let mut hooks = Vec::new();
                 for repo in repos {
-                    if repo.get("repo").and_then(Yaml::as_str) != Some("local")
-                        && !repo
-                            .get("rev")
-                            .and_then(Yaml::as_str)
-                            .is_some_and(|sha| SHA.is_match(sha))
+                    if repo.get("repo").and_then(Yaml::as_str) != Some("local") {
+                        issue(
+                            &mut errors,
+                            name,
+                            "hooks must use locked local Rust checks, not independently resolved environments",
+                        );
+                    }
+                    if let Some(items) = repo.get("hooks").and_then(Yaml::as_array) {
+                        hooks.extend(items);
+                    }
+                }
+                for (required, entry) in [
+                    (
+                        "repo-policy",
+                        "cargo run --locked --quiet -p aaru-repo-policy",
+                    ),
+                    ("rust-fmt", "cargo fmt --all --check"),
+                    (
+                        "rust-clippy",
+                        "cargo clippy --workspace --all-targets --locked -- -D warnings",
+                    ),
+                    ("rust-tests", "cargo test --workspace --locked"),
+                ] {
+                    let matching: Vec<_> = hooks
+                        .iter()
+                        .filter(|hook| hook.get("id").and_then(Yaml::as_str) == Some(required))
+                        .collect();
+                    if matching.len() != 1 {
+                        issue(
+                            &mut errors,
+                            name,
+                            format!("need exactly one required hook {required}"),
+                        );
+                        continue;
+                    }
+                    let hook = matching[0];
+                    let stages = hook
+                        .get("stages")
+                        .or_else(|| document.get("default_stages"));
+                    let stage_enabled = stages.is_none_or(|stages| {
+                        stages.as_array().is_some_and(|items| {
+                            items
+                                .iter()
+                                .any(|stage| stage.as_str() == Some("pre-commit"))
+                        })
+                    });
+                    if hook.get("entry").and_then(Yaml::as_str) != Some(entry)
+                        || hook.get("language").and_then(Yaml::as_str) != Some("system")
+                        || hook.get("always_run").and_then(Yaml::as_bool) != Some(true)
+                        || hook.get("pass_filenames").and_then(Yaml::as_bool) != Some(false)
+                        || hook.get("args").is_some_and(|args| {
+                            args.as_array().is_none_or(|items| !items.is_empty())
+                        })
+                        || !stage_enabled
                     {
                         issue(
                             &mut errors,
                             name,
-                            "hook revision must be an immutable commit",
-                        );
-                    }
-                    if let Some(items) = repo.get("hooks").and_then(Yaml::as_array) {
-                        hooks.extend(
-                            items
-                                .iter()
-                                .filter_map(|h| h.get("id").and_then(Yaml::as_str)),
+                            format!(
+                                "{required} must run its exact full check unconditionally at pre-commit"
+                            ),
                         );
                     }
                 }
-                for required in ["repo-policy", "rust-fmt", "rust-clippy", "rust-tests"] {
-                    if !hooks.contains(&required) {
-                        issue(
-                            &mut errors,
-                            name,
-                            format!("missing required hook {required}"),
-                        );
-                    }
+                if document
+                    .get("default_install_hook_types")
+                    .is_some_and(|types| {
+                        types.as_array().is_none_or(|items| {
+                            !items.iter().any(|kind| kind.as_str() == Some("pre-commit"))
+                        })
+                    })
+                {
+                    issue(
+                        &mut errors,
+                        name,
+                        "hook installation must include pre-commit",
+                    );
                 }
             }
             Err(error) => issue(&mut errors, name, format!("invalid YAML: {error}")),
         }
     }
-    if extension == "json"
-        && let Err(error) = serde_json::from_str::<serde_json::Value>(text)
-    {
-        issue(&mut errors, name, format!("invalid JSON: {error}"));
-    }
     errors
 }
 
 fn is_restricted(name: &str) -> bool {
+    let path = Path::new(name);
+    if matches!(
+        path.file_name().and_then(|file| file.to_str()),
+        Some(".env.example" | ".env.sample" | ".env.template")
+    ) {
+        return path
+            .parent()
+            .and_then(Path::to_str)
+            .is_some_and(|parent| SENSITIVE.is_match(parent));
+    }
     SENSITIVE.is_match(name)
-        && !matches!(
-            Path::new(name).file_name().and_then(|file| file.to_str()),
-            Some(".env.example" | ".env.sample" | ".env.template")
-        )
 }
 
 fn inspect_repository() -> Result<Vec<String>, String> {
     let result = Command::new("git")
-        .args(["ls-files", "--cached", "-z"])
+        .args(["ls-files", "--stage", "-z"])
         .output()
         .map_err(|e| e.to_string())?;
     if !result.status.success() {
         return Err("git ls-files failed".into());
     }
-    let names = std::str::from_utf8(&result.stdout).map_err(|e| e.to_string())?;
+    let index = std::str::from_utf8(&result.stdout).map_err(|e| e.to_string())?;
     let mut errors = Vec::new();
-    for name in names.split('\0').filter(|n| !n.is_empty()) {
+    let mut names = Vec::new();
+    for record in index.split('\0').filter(|record| !record.is_empty()) {
+        let (header, name) = record.split_once('\t').ok_or("malformed index record")?;
+        names.push(name);
         if is_restricted(name) {
             issue(
                 &mut errors,
@@ -463,26 +631,62 @@ fn inspect_repository() -> Result<Vec<String>, String> {
             );
             continue;
         }
-        let path = Path::new(name);
-        let extension = path.extension().and_then(|s| s.to_str()).unwrap_or("");
-        if name != "LICENSE.md"
-            && !matches!(
-                extension,
-                "rs" | "js" | "mjs" | "ts" | "py" | "toml" | "json" | "yml" | "yaml" | "sh"
-            )
-        {
+        if matches!(
+            name,
+            ".agent-docs/genshin_decision_engine_design_memo.md"
+                | ".agent-docs/behavioral_testing_overhaul_agent_protocol.md"
+                | ".agent-docs/Evidence_Governed_Agentic_Reverse_Engineering.pdf"
+        ) {
+            continue;
+        }
+        let fields: Vec<_> = header.split(' ').collect();
+        if fields.len() != 3 || fields[2] != "0" {
+            issue(&mut errors, name, "unmerged or malformed index entry");
+            continue;
+        }
+        let oid = fields[1];
+        if !matches!(oid.len(), 40 | 64) || !oid.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err("invalid index object ID".into());
+        }
+        let size_result = Command::new("git")
+            .args(["cat-file", "-s", oid])
+            .output()
+            .map_err(|error| error.to_string())?;
+        if !size_result.status.success() {
+            return Err(format!("cannot inspect staged metadata for {name}"));
+        }
+        let size = std::str::from_utf8(&size_result.stdout)
+            .map_err(|error| error.to_string())?
+            .trim()
+            .parse::<u64>()
+            .map_err(|error| error.to_string())?;
+        let metadata_errors = hygiene::metadata(name, fields[0], size);
+        if !metadata_errors.is_empty() {
+            errors.extend(metadata_errors);
+            continue;
+        }
+        if !hygiene::is_text(name) {
             continue;
         }
         let staged = Command::new("git")
-            .args(["show", &format!(":{name}")])
+            .args(["cat-file", "blob", oid])
             .output()
             .map_err(|e| e.to_string())?;
         if !staged.status.success() {
             return Err(format!("cannot inspect staged {name}"));
         }
+        if name.ends_with(".case") {
+            errors.extend(hygiene::inspect_secrets(
+                name,
+                &String::from_utf8_lossy(&staged.stdout),
+            ));
+            continue;
+        }
         let text = std::str::from_utf8(&staged.stdout).map_err(|e| format!("{name}: {e}"))?;
+        errors.extend(hygiene::inspect(name, text));
         errors.extend(inspect_text(name, text));
     }
+    errors.extend(hygiene::portable_paths(names));
     Ok(errors)
 }
 
@@ -504,6 +708,9 @@ fn ci_outcomes(text: &str) -> Result<Vec<String>, String> {
 fn main() -> ExitCode {
     let result = match std::env::args().nth(1).as_deref() {
         None => inspect_repository(),
+        Some("framework-advisories") => {
+            framework_security::audit(Path::new(".github/requirements-precommit.txt"))
+        }
         Some("ci-gate") => std::env::var("AARU_CI_NEEDS")
             .map_err(|error| error.to_string())
             .and_then(|text| ci_outcomes(&text)),
@@ -526,7 +733,7 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{ci_outcomes, inspect_text, is_restricted};
+    use super::{Yaml, ci_outcomes, inspect_text, is_restricted};
 
     #[test]
     fn aggregate_gate_rejects_skipped_failed_cancelled_and_missing_jobs() {
@@ -649,6 +856,7 @@ mod tests {
                 "{safe}  unprotected:\n    runs-on: windows-2025\n    timeout-minutes: 10\n    steps:\n      - run: cargo test --locked\n"
             ),
             format!("{safe}    continue-on-error: true\n"),
+            format!("{safe}    continue-on-error: ${{{{ always() }}}}\n"),
         ] {
             assert!(
                 !inspect_text(".github/workflows/example.yml", &faulty).is_empty(),
@@ -659,15 +867,11 @@ mod tests {
 
     #[test]
     fn aggregate_workflow_cannot_omit_prerequisites_or_fake_a_success() {
-        let sha = "a".repeat(40);
-        let safe = format!(
-            "{}  gate:\n    name: Quality gate\n    needs: [native]\n    if: always()\n    runs-on: ubuntu-24.04\n    timeout-minutes: 5\n    steps:\n      - uses: step-security/harden-runner@{sha}\n        with:\n          egress-policy: block\n      - run: cargo run --locked --quiet -p aaru-repo-policy -- ci-gate\n        env:\n          AARU_CI_NEEDS: ${{{{ toJSON(needs) }}}}\n",
-            hardened_workflow()
-        );
-        assert!(inspect_text(".github/workflows/ci.yml", &safe).is_empty());
+        let safe = include_str!("../../../.github/workflows/ci.yml");
+        assert!(inspect_text(".github/workflows/ci.yml", safe).is_empty());
         for faulty in [
-            safe.replace("needs: [native]", "needs: []"),
-            safe.replace("if: always()", "if: success()"),
+            safe.replace("needs: [native, supply-chain]", "needs: []"),
+            safe.replace("if: ${{ always() }}", "if: ${{ success() }}"),
             safe.replace(
                 "cargo run --locked --quiet -p aaru-repo-policy -- ci-gate",
                 "echo success",
@@ -682,12 +886,127 @@ mod tests {
     }
 
     #[test]
+    fn required_ci_jobs_and_commands_cannot_disappear_behind_a_green_gate() {
+        let safe: Yaml =
+            serde_saphyr::from_str(include_str!("../../../.github/workflows/ci.yml")).unwrap();
+        let mut removed_job = safe.clone();
+        removed_job["jobs"]
+            .as_object_mut()
+            .unwrap()
+            .remove("supply-chain");
+        removed_job["jobs"]["quality"]["needs"] = serde_json::json!(["native"]);
+        let errors = inspect_text(".github/workflows/ci.yml", &removed_job.to_string());
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("missing required supply-chain job"))
+        );
+        let mut missing_python = safe.clone();
+        missing_python["jobs"]["native"]["steps"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|step| {
+                !step
+                    .get("uses")
+                    .and_then(Yaml::as_str)
+                    .is_some_and(|action| action.starts_with("actions/setup-python@"))
+            });
+        let errors = inspect_text(".github/workflows/ci.yml", &missing_python.to_string());
+        assert!(errors.iter().any(|error| error.contains("native must install an exactly pinned Python runtime")));
+        for (job, command) in [
+            (
+                "native",
+                "python -m pip install --require-hashes --only-binary=:all: -r .github/requirements-precommit.txt",
+            ),
+            (
+                "native",
+                "python -m pre_commit run --all-files --show-diff-on-failure",
+            ),
+            ("supply-chain", "cargo audit --deny warnings"),
+            ("supply-chain", "cargo deny --locked check"),
+            (
+                "supply-chain",
+                "cargo run --locked --quiet -p aaru-repo-policy -- framework-advisories",
+            ),
+        ] {
+            let mut missing = safe.clone();
+            let steps = missing["jobs"][job]["steps"].as_array_mut().unwrap();
+            let position = steps
+                .iter()
+                .position(|step| step.get("run").and_then(Yaml::as_str) == Some(command))
+                .unwrap();
+            let mut conditional = missing.clone();
+            conditional["jobs"][job]["steps"][position]["if"] = Yaml::Bool(false);
+            missing["jobs"][job]["steps"]
+                .as_array_mut()
+                .unwrap()
+                .remove(position);
+            for faulty in [missing, conditional] {
+                let errors = inspect_text(".github/workflows/ci.yml", &faulty.to_string());
+                assert!(
+                    errors
+                        .iter()
+                        .any(|error| error.contains(&format!("{job} must always run {command}")))
+                );
+            }
+        }
+        let mut linux_only = safe.clone();
+        linux_only["jobs"]["native"]["strategy"]["matrix"]["os"] =
+            serde_json::json!(["ubuntu-24.04"]);
+        let mut excluded_windows = safe.clone();
+        excluded_windows["jobs"]["native"]["strategy"]["matrix"]["exclude"] =
+            serde_json::json!([{"os":"windows-2025"}]);
+        let mut unbound = safe;
+        unbound["jobs"]["native"]["runs-on"] = Yaml::String("ubuntu-24.04".into());
+        unbound["jobs"]["native"]["steps"][0]["with"]["egress-policy"] =
+            Yaml::String("block".into());
+        for faulty in [linux_only, excluded_windows, unbound] {
+            let errors = inspect_text(".github/workflows/ci.yml", &faulty.to_string());
+            assert!(
+                errors.iter().any(
+                    |error| error.contains("native matrix must execute both Linux and Windows")
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn workflow_tool_installations_require_exact_versions() {
+        let safe = hardened_workflow();
+        for (action, key, version) in [
+            ("actions/setup-python", "python-version", "3.14.8"),
+            ("dtolnay/rust-toolchain", "toolchain", "1.98.1"),
+        ] {
+            let pinned = format!(
+                "{safe}      - uses: {action}@{}\n        with:\n          {key}: '{version}'\n",
+                "a".repeat(40)
+            );
+            assert!(inspect_text(".github/workflows/example.yml", &pinned).is_empty());
+            for drift in ["stable", "3.14", "${{ matrix.version }}"] {
+                let errors = inspect_text(
+                    ".github/workflows/example.yml",
+                    &pinned.replace(version, drift),
+                );
+                assert!(
+                    errors
+                        .iter()
+                        .any(|error| error.contains(&format!("{key} needs an exact version")))
+                );
+            }
+        }
+    }
+
+    #[test]
     fn restricted_paths_are_rejected_before_any_content_read() {
         for name in [
             "auth.json",
             "service-account-prod.json",
             "local-credentials.json",
             "vault.yaml",
+            "account.good.json",
+            "account.aaru.json",
+            ".DS_Store",
+            "source.rs.swp",
             ".npmrc",
             ".env.local",
             ".env.dev.sample",
@@ -695,6 +1014,12 @@ mod tests {
             "NODE_MODULES/x.js",
             "target/a.rs",
             "web/pkg/a.js",
+            "private-data/.env.example",
+            "node_modules/.env.sample",
+            ".npm/cache/record.json",
+            ".yarn/cache/package.zip",
+            ".pnp.cjs",
+            "bower_components/library/source.json",
         ] {
             assert!(is_restricted(name), "accepted {name}");
         }
@@ -710,20 +1035,34 @@ mod tests {
     }
 
     #[test]
-    fn missing_hooks_and_mutable_hook_revisions_are_rejected() {
-        let sha = "a".repeat(40);
-        let safe = format!(
-            "repos:\n  - repo: https://example.test/hooks\n    rev: {sha}\n    hooks:\n      - id: general\n  - repo: local\n    hooks:\n      - id: repo-policy\n      - id: rust-fmt\n      - id: rust-clippy\n      - id: rust-tests\n"
-        );
-        assert!(inspect_text(".pre-commit-config.yaml", &safe).is_empty());
-        assert!(!inspect_text(".pre-commit-config.yaml", &safe.replace(&sha, "v1")).is_empty());
-        assert!(
-            !inspect_text(
-                ".pre-commit-config.yaml",
-                &safe.replace("id: rust-tests", "id: other")
-            )
-            .is_empty()
-        );
+    fn required_hooks_cannot_be_replaced_disabled_or_independently_resolved() {
+        let safe = include_str!("../../../.pre-commit-config.yaml");
+        assert!(inspect_text(".pre-commit-config.yaml", safe).is_empty());
+        for faulty in [
+            safe.replace("id: rust-tests", "id: other"),
+            safe.replace("cargo test --workspace --locked", "echo success"),
+            safe.replace("always_run: true", "always_run: false"),
+            safe.replace("pass_filenames: false", "pass_filenames: true"),
+            safe.replace("language: system", "language: python"),
+            safe.replace(
+                "id: rust-tests",
+                "id: rust-tests\n        args: ['--', '--ignored']",
+            ),
+            format!("default_stages: [manual]\n{safe}"),
+            format!("default_install_hook_types: [pre-push]\n{safe}"),
+            safe.replace(
+                "repo: local",
+                &format!(
+                    "repo: https://example.test/hooks\n    rev: {}",
+                    "a".repeat(40)
+                ),
+            ),
+        ] {
+            assert!(
+                !inspect_text(".pre-commit-config.yaml", &faulty).is_empty(),
+                "accepted {faulty}"
+            );
+        }
     }
 
     #[test]
@@ -733,8 +1072,8 @@ mod tests {
             ["S", "KIP=rust-tests git commit"].concat(),
             ["git -c core.hooks", "Path=/tmp commit"].concat(),
         ] {
-            assert!(!inspect_text("script.sh", &text).is_empty());
+            assert!(!inspect_text("workflow.yml", &format!("run: {text}\n")).is_empty());
         }
-        assert!(inspect_text("script.sh", "cargo test --locked").is_empty());
+        assert!(inspect_text("workflow.yml", "run: cargo test --locked\n").is_empty());
     }
 }

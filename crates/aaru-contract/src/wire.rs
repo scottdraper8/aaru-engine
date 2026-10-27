@@ -1,4 +1,3 @@
-//! All external JSON enters here, before a generic map can erase duplicate keys.
 use crate::*;
 use serde::de::{
     DeserializeOwned, DeserializeSeed, Error, IgnoredAny, MapAccess, SeqAccess, Visitor,
@@ -25,6 +24,7 @@ pub fn decode<T: DeserializeOwned>(text: &str) -> ContractResult<T> {
             "UTF-8 BOM is not accepted",
         ));
     }
+    guard_numbers(text)?;
     let mut deserializer = serde_json::Deserializer::from_str(text);
     Guard {
         depth: 0,
@@ -37,7 +37,6 @@ pub fn decode<T: DeserializeOwned>(text: &str) -> ContractResult<T> {
 }
 pub fn encode<T: serde::Serialize>(value: &T) -> ContractResult<String> {
     let text = serde_json::to_string(value).map_err(parse_error)?;
-    // Apply identical limits to outbound and inbound data.
     let _: IgnoredAny = decode(&text)?;
     Ok(text)
 }
@@ -46,8 +45,41 @@ pub fn decode_request(text: &str) -> ContractResult<WorkerRequest> {
     request.validate()?;
     Ok(request)
 }
-pub fn decode_account(text: &str) -> ContractResult<ValidatedAccount> {
-    ValidatedAccount::imported(decode(text)?)
+fn guard_numbers(text: &str) -> ContractResult<()> {
+    let bytes = text.as_bytes();
+    let mut index = 0;
+    let mut in_string = false;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'\\' if in_string => {
+                index += 2;
+                continue;
+            }
+            b'"' => in_string = !in_string,
+            b'-' | b'0'..=b'9' if !in_string => {
+                let start = index;
+                while index < bytes.len() && !b" \n\r\t,]}:".contains(&bytes[index]) {
+                    index += 1;
+                }
+                let token = &text[start..index];
+                let excessive_exponent = token.split_once(['e', 'E']).is_some_and(|(_, e)| {
+                    e.parse::<i32>()
+                        .map_or(true, |e| e.unsigned_abs() > numeric::MAX_EXPONENT as u32)
+                });
+                if token.len() > numeric::MAX_DECIMAL_BYTES || excessive_exponent {
+                    return Err(ContractError::new(
+                        IssueCode::ResourceLimit,
+                        "",
+                        "numeric lexeme/exponent budget exceeded",
+                    ));
+                }
+                continue;
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    Ok(())
 }
 fn parse_error(error: serde_json::Error) -> ContractError {
     let message = error.to_string();
@@ -143,15 +175,11 @@ impl<'de> Visitor<'de> for Guard {
     }
 }
 
-/// Hash exact normalized serialization for transaction acknowledgements (not the
-/// semantic result fingerprint). Source bytes and all canonical IDs are included.
-pub fn canonical_backup_digest(account: &AccountSnapshot) -> ContractResult<Digest> {
+pub fn snapshot_digest(account: &AccountSnapshot) -> ContractResult<Digest> {
     account.validate()?;
     Ok(Digest::of(encode(account)?.as_bytes()))
 }
 
-/// Stable semantic inventory hash: sort physical records/sets; exclude source,
-/// provenance, and capture metadata, but include section coverage and preferences.
 pub fn account_semantic_digest(account: &AccountSnapshot) -> ContractResult<Digest> {
     account.validate()?;
     let mut normalized = account.clone();
@@ -185,12 +213,10 @@ pub fn account_semantic_digest(account: &AccountSnapshot) -> ContractResult<Dige
     Ok(Digest::of(encode(&normalized)?.as_bytes()))
 }
 
-/// Hash a specification with BTreeMap/BTreeSet order and declared vector order.
 pub fn decision_spec_digest(spec: &DecisionSpec) -> ContractResult<Digest> {
     Ok(Digest::of(encode(spec)?.as_bytes()))
 }
 
-/// SHA-256 over a JSON array with unambiguous component framing.
 pub fn result_fingerprint(
     account: &AccountSnapshot,
     spec: &DecisionSpec,
@@ -199,14 +225,37 @@ pub fn result_fingerprint(
 ) -> ContractResult<Digest> {
     let account = account_semantic_digest(account)?;
     let spec_hash = decision_spec_digest(spec)?;
+    fingerprint_from_digests(
+        &account,
+        &spec_hash,
+        &EngineIdentity {
+            version: engine_version.into(),
+            revision: engine_revision.clone(),
+        },
+    )
+}
+pub fn fingerprint_from_digests(
+    account: &Digest,
+    spec: &Digest,
+    engine: &EngineIdentity,
+) -> ContractResult<Digest> {
     Ok(Digest::of(
         encode(&(
             "aaru-result-v1",
             account,
-            spec_hash,
-            engine_version,
-            engine_revision,
+            spec,
+            &engine.version,
+            &engine.revision,
         ))?
         .as_bytes(),
+    ))
+}
+pub fn operation_fingerprint(
+    context: &RequestContext,
+    generation: Counter,
+    payload: &Request,
+) -> ContractResult<Digest> {
+    Ok(Digest::of(
+        encode(&("aaru-operation-v1", context, generation, payload))?.as_bytes(),
     ))
 }

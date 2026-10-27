@@ -46,7 +46,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable action revision
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           toolchain: 1.98.1
           components: rustfmt, clippy
@@ -73,13 +73,14 @@ jobs:
           allowed-endpoints: >-
             github.com:443
             api.github.com:443
+            api.osv.dev:443
             static.rust-lang.org:443
             index.crates.io:443
             static.crates.io:443
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable action revision
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           toolchain: 1.98.1
       - name: Install pinned advisory and dependency-policy tools
@@ -88,6 +89,8 @@ jobs:
           cargo install --locked --version 0.20.2 cargo-deny
       - name: Reject vulnerabilities and advisory warnings
         run: cargo audit --deny warnings
+      - name: Reject external framework advisories
+        run: cargo run --locked --quiet -p aaru-repo-policy -- framework-advisories
       - name: Enforce dependency sources and licenses
         run: cargo deny --locked check
 
@@ -112,7 +115,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable action revision
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           toolchain: 1.98.1
       - name: Require every prerequisite to succeed

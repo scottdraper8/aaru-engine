@@ -48,7 +48,6 @@ impl<T> Section<T> {
         matches!(self, Self::Supplied { .. })
     }
 }
-pub type SectionCoverage<T> = Section<T>;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
@@ -89,11 +88,21 @@ pub struct Talents {
 pub struct OwnedCharacter {
     pub id: CharacterId,
     pub definition: DefinitionId,
+    pub availability: CharacterAvailability,
     pub level: Option<u16>,
     pub ascension: Option<u16>,
     pub constellation: Option<u16>,
     pub talents: Option<Talents>,
     pub source: Option<SourceRef>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
+pub enum CharacterAvailability {
+    Resolved {
+        owned: AvailabilityId,
+        identity: DefinitionId,
+    },
+    Unknown,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -107,7 +116,6 @@ pub struct WeaponInstance {
     pub game_lock: Option<bool>,
     pub source: Option<SourceRef>,
 }
-/// An unsupported numeric lexeme remains inert and cannot be evaluated as zero.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ImportedQuantity {
@@ -234,7 +242,6 @@ pub struct AccountSnapshot {
     pub source_archive: Option<SourceArchive>,
     pub provenance: Vec<Provenance>,
 }
-/// Non-deserializable trust marker: external imports cannot assert a bundled sample origin.
 #[derive(Debug, Clone)]
 pub struct ValidatedAccount {
     snapshot: AccountSnapshot,
@@ -248,7 +255,6 @@ impl ValidatedAccount {
             sample: None,
         })
     }
-    /// Only the engine's bundled catalog loader calls this, never an import discriminator.
     pub fn bundled(snapshot: AccountSnapshot, sample: SampleId) -> ContractResult<Self> {
         snapshot.validate()?;
         if sample.is_synthetic()
@@ -266,6 +272,15 @@ impl ValidatedAccount {
         Ok(Self {
             snapshot,
             sample: Some(sample),
+        })
+    }
+    pub fn with_preferences(&self, preferences: AllocationPreferences) -> ContractResult<Self> {
+        let mut snapshot = self.snapshot.clone();
+        snapshot.preferences = preferences;
+        snapshot.validate()?;
+        Ok(Self {
+            snapshot,
+            sample: self.sample,
         })
     }
     pub fn snapshot(&self) -> &AccountSnapshot {
@@ -302,12 +317,36 @@ impl AccountSnapshot {
         }
         let mut identities = BTreeSet::new();
         let mut characters = BTreeSet::new();
+        let mut definitions = BTreeSet::new();
+        let mut owned_identities = BTreeMap::new();
+        let mut identity_owned = BTreeMap::new();
         for c in self.characters.records() {
             if !identities.insert(c.id.as_str()) {
                 return fail(
                     IssueCode::DuplicateIdentity,
                     "/characters",
                     "duplicate canonical identity",
+                );
+            }
+            if !definitions.insert(&c.definition) {
+                return fail(
+                    IssueCode::DuplicateIdentity,
+                    "/characters",
+                    "duplicate selectable definition",
+                );
+            }
+            if let CharacterAvailability::Resolved { owned, identity } = &c.availability
+                && (owned_identities
+                    .insert(owned, identity)
+                    .is_some_and(|old| old != identity)
+                    || identity_owned
+                        .insert(identity, owned)
+                        .is_some_and(|old| old != owned))
+            {
+                return fail(
+                    IssueCode::DuplicateIdentity,
+                    "/characters",
+                    "one real identity must map to one owned availability",
                 );
             }
             characters.insert(c.id.clone());
@@ -333,7 +372,7 @@ impl AccountSnapshot {
             self.validate_source(&w.source)?;
             validate_owner(&w.owner, &characters)?;
             if w.owner != OwnerRef::Unequipped
-                && !occupied.insert((owner_key(&w.owner), "weapon".to_owned()))
+                && !occupied.insert((self.owner_resource_key(&w.owner), "weapon".to_owned()))
             {
                 return fail(
                     IssueCode::EquipmentConflict,
@@ -361,7 +400,7 @@ impl AccountSnapshot {
             self.validate_source(&a.source)?;
             validate_owner(&a.owner, &characters)?;
             if a.owner != OwnerRef::Unequipped
-                && !occupied.insert((owner_key(&a.owner), format!("{:?}", a.slot)))
+                && !occupied.insert((self.owner_resource_key(&a.owner), format!("{:?}", a.slot)))
             {
                 return fail(
                     IssueCode::EquipmentConflict,
@@ -409,6 +448,36 @@ impl AccountSnapshot {
             }
         }
         Ok(())
+    }
+    fn owner_resource_key(&self, owner: &OwnerRef) -> String {
+        if let OwnerRef::Character(id) = owner
+            && let Some(OwnedCharacter {
+                availability: CharacterAvailability::Resolved { owned, .. },
+                ..
+            }) = self.characters.records().iter().find(|c| &c.id == id)
+        {
+            return format!("availability:{}", owned.as_str());
+        }
+        owner_key(owner)
+    }
+    pub fn owners_share_resource(&self, left: &OwnerRef, right: &OwnerRef) -> bool {
+        self.owner_resource_key(left) == self.owner_resource_key(right)
+    }
+    pub fn availability(&self, id: &CharacterId) -> ContractResult<&AvailabilityId> {
+        match self
+            .characters
+            .records()
+            .iter()
+            .find(|c| &c.id == id)
+            .map(|c| &c.availability)
+        {
+            Some(CharacterAvailability::Resolved { owned, .. }) => Ok(owned),
+            _ => Err(ContractError::new(
+                IssueCode::UnknownAvailability,
+                "/characters",
+                "unknown ownership/form relationship blocks affected evaluation",
+            )),
+        }
     }
     fn validate_source(&self, source: &Option<SourceRef>) -> ContractResult<()> {
         if let Some(source) = source {
@@ -465,33 +534,36 @@ impl AccountSnapshot {
                 "unknown recipient",
             ));
         }
+        self.availability(&movement.recipient)?;
+        if let OwnerRef::Character(character) = owner {
+            self.availability(character)?;
+        }
         let target = OwnerRef::Character(movement.recipient.clone());
-        if owner == &target {
+        if self.owners_share_resource(owner, &target) {
             return Ok(());
         }
-        let blocked = if matches!(owner, OwnerRef::UnresolvedExternal(_)) {
-            Some(IssueCode::UnresolvedOwner)
-        } else if self.preferences.protected_items.contains(&movement.item) {
-            Some(IssueCode::ProtectedItem)
-        } else if lock == Some(true)
-            && self.preferences.game_lock_policy == GameLockPolicy::ProtectFromReassignment
-        {
-            Some(IssueCode::LockedItem)
-        } else if self.preferences.excluded_items.contains(&movement.item)
-            || self
-                .preferences
-                .excluded_characters
-                .contains(&movement.recipient)
-            || self
-                .preferences
-                .pinned
-                .iter()
-                .any(|p| p.item == movement.item && p.owner != target)
-        {
-            Some(IssueCode::ProtectedItem)
-        } else {
-            None
-        };
+        let blocked =
+            if matches!(owner, OwnerRef::UnresolvedExternal(_)) {
+                Some(IssueCode::UnresolvedOwner)
+            } else if self.preferences.protected_items.contains(&movement.item) {
+                Some(IssueCode::ProtectedItem)
+            } else if lock == Some(true)
+                && self.preferences.game_lock_policy == GameLockPolicy::ProtectFromReassignment
+            {
+                Some(IssueCode::LockedItem)
+            } else if self.preferences.excluded_items.contains(&movement.item)
+                || self
+                    .preferences
+                    .excluded_characters
+                    .contains(&movement.recipient)
+                || self.preferences.pinned.iter().any(|p| {
+                    p.item == movement.item && !self.owners_share_resource(&p.owner, &target)
+                })
+            {
+                Some(IssueCode::ProtectedItem)
+            } else {
+                None
+            };
         if let Some(code) = blocked {
             return Err(ContractError::new(
                 code,

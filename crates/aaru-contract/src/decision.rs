@@ -39,6 +39,10 @@ pub enum Dimension {
     SpecialSystemCoherence,
     ResourceEfficiency,
 }
+pub const MAX_WORK_UNITS_PER_SLICE: u32 = 256;
+pub const MAX_RESULT_REASONS: usize = 1024;
+pub const MAX_RESULT_BYTES: usize = 16 * 1024 * 1024;
+
 pub const DIMENSIONS: [Dimension; 9] = [
     Dimension::OutputPotential,
     Dimension::ReactionCoherence,
@@ -88,7 +92,6 @@ impl Objective {
         }
         Ok(())
     }
-    /// Dot product; a single ties-to-even rounding after all products are summed.
     pub fn score(&self, vector: &ScoreVector) -> ContractResult<Fixed> {
         self.validate()?;
         vector.validate()?;
@@ -134,9 +137,64 @@ impl ScoreVector {
                 "all nine dimensions must be explicit",
             ));
         }
+        if self.dimensions.values().any(|m| matches!(m, Metric::Available { value, .. } if *value < Fixed::ZERO || *value > Fixed::ONE)) {
+            return Err(ContractError::new(IssueCode::InvalidObjective, "/score_vector", "normalized utility must be within zero and one"));
+        }
         Ok(())
     }
-    /// All dimensions maximize. Unknowns make vectors incomparable, never zero.
+    pub fn aggregate(vectors: &[Self]) -> ContractResult<Self> {
+        if vectors.is_empty() || vectors.len() > 3 {
+            return Err(ContractError::new(
+                IssueCode::InvalidEncounter,
+                "/score_vector",
+                "one to three encounter vectors required",
+            ));
+        }
+        for vector in vectors {
+            vector.validate()?;
+        }
+        let mut dimensions = BTreeMap::new();
+        for dimension in DIMENSIONS {
+            let mut sum = 0_i128;
+            let mut fidelity = Fidelity::ExactUnderModel;
+            let mut provenance = BTreeSet::new();
+            let mut unavailable = None;
+            for vector in vectors {
+                match &vector.dimensions[&dimension] {
+                    Metric::Available {
+                        value,
+                        fidelity: f,
+                        provenance: p,
+                    } => {
+                        sum += i128::from(value.scaled());
+                        fidelity = std::cmp::max(fidelity, f.clone());
+                        provenance.extend(p.iter().cloned());
+                    }
+                    Metric::Unavailable { issue } => {
+                        unavailable.get_or_insert(issue.clone());
+                    }
+                }
+            }
+            dimensions.insert(
+                dimension,
+                match unavailable {
+                    Some(issue) => Metric::Unavailable { issue },
+                    None => Metric::Available {
+                        value: Fixed::from_scaled(
+                            i64::try_from(
+                                numeric::round_ratio(sum, vectors.len() as i128)
+                                    .map_err(|_| numeric_overflow())?,
+                            )
+                            .map_err(|_| numeric_overflow())?,
+                        ),
+                        fidelity,
+                        provenance: provenance.into_iter().collect(),
+                    },
+                },
+            );
+        }
+        Ok(Self { dimensions })
+    }
     pub fn pareto_against(&self, other: &Self) -> ContractResult<ParetoRelation> {
         self.validate()?;
         other.validate()?;
@@ -175,7 +233,6 @@ pub enum ParetoStatus {
     Unknown,
 }
 
-/// Semantic keys are resolved by the engine's mechanics catalog, not an ontology here.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
     tag = "type",
@@ -229,10 +286,11 @@ pub struct SearchPolicy {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DecisionSpec {
+    pub assignments: AssignmentDomain,
     pub mechanics: MechanicsRef,
+    pub normalization: Normalization,
     pub scope: EvaluationScope,
     pub objective: Objective,
-    /// One explicit encounter per simultaneous team; length defines team count.
     pub encounters: Vec<Encounter>,
     pub assumptions: Assumptions,
     pub constraints: BuildConstraints,
@@ -248,6 +306,7 @@ impl DecisionSpec {
             ));
         }
         self.objective.validate()?;
+        self.normalization.validate()?;
         if self.encounters.is_empty()
             || self.encounters.len() > 3
             || self.encounters.iter().any(|e| e.target_count == 0)
@@ -261,6 +320,7 @@ impl DecisionSpec {
         if self.search.max_results == 0
             || self.search.max_results > 128
             || self.search.work_units_per_slice == 0
+            || self.search.work_units_per_slice > MAX_WORK_UNITS_PER_SLICE
             || self.search.max_build_nodes.0 == 0
             || self.search.max_team_nodes.0 == 0
             || self.search.max_allocation_nodes.0 == 0
@@ -272,6 +332,36 @@ impl DecisionSpec {
             ));
         }
         let snapshot = account.snapshot();
+        for character in snapshot.characters.records() {
+            let affected = match &self.scope {
+                EvaluationScope::WholeSuppliedInventory => true,
+                EvaluationScope::Subset { characters, .. } => characters.contains(&character.id),
+            };
+            if affected {
+                snapshot.availability(&character.id)?;
+            }
+        }
+        for item in snapshot
+            .weapons
+            .records()
+            .iter()
+            .map(|w| (&w.id, &w.owner))
+            .chain(
+                snapshot
+                    .artifacts
+                    .records()
+                    .iter()
+                    .map(|a| (&a.id, &a.owner)),
+            )
+        {
+            let affected = match &self.scope {
+                EvaluationScope::WholeSuppliedInventory => true,
+                EvaluationScope::Subset { items, .. } => items.contains(item.0),
+            };
+            if affected && let OwnerRef::Character(owner) = item.1 {
+                snapshot.availability(owner)?;
+            }
+        }
         let chars: BTreeSet<_> = snapshot
             .characters
             .records()
@@ -314,6 +404,19 @@ impl DecisionSpec {
                 ));
             }
         }
+        let mut pinned = BTreeSet::new();
+        for pin in &self.constraints.pinned_assignments {
+            if snapshot.item_owner(&pin.item).is_none()
+                || !pinned.insert(&pin.item)
+                || matches!(&pin.owner, OwnerRef::Character(c) if !chars.contains(c))
+            {
+                return Err(ContractError::new(
+                    IssueCode::InvalidReference,
+                    "/constraints/pinned_assignments",
+                    "unknown or repeated pin resource",
+                ));
+            }
+        }
         if let EvaluationScope::Subset {
             characters, items, ..
         } = &self.scope
@@ -336,9 +439,40 @@ pub struct ItemMove {
     pub recipient: CharacterId,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum AssignmentDomain {
+    Unrestricted,
+    CurrentLoadout,
+    ReservedMove {
+        movement: ItemMove,
+    },
+    MoveOnly {
+        allocation: Box<Allocation>,
+        movement: ItemMove,
+        donor_fallback: Option<ItemId>,
+    },
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ComparisonMode {
+    CurrentLoadout {
+        allocation: Box<Allocation>,
+        donor_fallback: Option<ItemId>,
+    },
+    UnrestrictedOptimum,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ComparisonSpec {
+    pub baseline: DecisionSpec,
+    pub mode: ComparisonMode,
+    pub movement: ItemMove,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ResourceFootprint {
     pub characters: BTreeSet<CharacterId>,
+    pub availability: BTreeSet<AvailabilityId>,
     pub items: BTreeSet<ItemId>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -358,6 +492,7 @@ pub struct TeamAssignment {
     pub encounter_index: u16,
     pub builds: Vec<BuildAssignment>,
     pub archetypes: BTreeSet<DefinitionId>,
+    pub score_vector: ScoreVector,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -379,7 +514,9 @@ impl Allocation {
         if self.teams.len() != spec.encounters.len() {
             return Err(invalid("team/encounter count mismatch"));
         }
+        account.validate()?;
         let mut characters = BTreeSet::new();
+        let mut availability = BTreeSet::new();
         let mut items = BTreeSet::new();
         let mut encounters = BTreeSet::new();
         let mut ids = BTreeSet::new();
@@ -404,6 +541,15 @@ impl Allocation {
                 {
                     return Err(invalid("unknown/repeated character or build"));
                 }
+                for (key, minimum) in &spec.constraints.metric_minima {
+                    if !matches!(build.metrics.get(key), Some(Metric::Available { value, .. }) if value >= minimum)
+                    {
+                        return Err(invalid("required build metric minimum is absent or unmet"));
+                    }
+                }
+                if !availability.insert(account.availability(&build.character)?.clone()) {
+                    return Err(invalid("mutually exclusive forms share owned availability"));
+                }
                 if let Some(weapon) = &build.weapon {
                     if !account.weapons.records().iter().any(|w| &w.id == weapon)
                         || !items.insert(weapon.clone())
@@ -416,6 +562,26 @@ impl Allocation {
                     })?;
                 }
                 for (slot, item) in &build.artifacts {
+                    if account
+                        .artifacts
+                        .records()
+                        .iter()
+                        .find(|a| &a.id == item)
+                        .is_some_and(|a| {
+                            spec.constraints
+                                .allowed_sets
+                                .get(&build.character)
+                                .is_some_and(|sets| !sets.contains(&a.set))
+                                || spec
+                                    .constraints
+                                    .allowed_main_stats
+                                    .get(&build.character)
+                                    .and_then(|slots| slots.get(slot))
+                                    .is_some_and(|stats| !stats.contains(&a.main_stat))
+                        })
+                    {
+                        return Err(invalid("artifact violates allowed set or main stat"));
+                    }
                     if !account
                         .artifacts
                         .records()
@@ -463,19 +629,99 @@ impl Allocation {
         {
             if items.contains(&pin.item)
                 && !self.teams.iter().flat_map(|t| &t.builds).any(|b| {
-                    pin.owner == OwnerRef::Character(b.character.clone())
-                        && (b.weapon.as_ref() == Some(&pin.item)
-                            || b.artifacts.values().any(|i| i == &pin.item))
+                    account.owners_share_resource(
+                        &pin.owner,
+                        &OwnerRef::Character(b.character.clone()),
+                    ) && (b.weapon.as_ref() == Some(&pin.item)
+                        || b.artifacts.values().any(|i| i == &pin.item))
                 })
             {
                 return Err(invalid("allocation violates pinned assignment"));
             }
         }
-        if self.footprint.characters != characters || self.footprint.items != items {
+        if self.footprint.characters != characters
+            || self.footprint.items != items
+            || self.footprint.availability != availability
+        {
             return Err(invalid("footprint differs from exact assignments"));
+        }
+        match &spec.assignments {
+            AssignmentDomain::Unrestricted => {}
+            AssignmentDomain::CurrentLoadout => {
+                for build in self.teams.iter().flat_map(|t| &t.builds) {
+                    let owner = OwnerRef::Character(build.character.clone());
+                    let weapon = account
+                        .weapons
+                        .records()
+                        .iter()
+                        .find(|w| account.owners_share_resource(&w.owner, &owner))
+                        .map(|w| w.id.clone());
+                    let artifacts = account
+                        .artifacts
+                        .records()
+                        .iter()
+                        .filter(|a| account.owners_share_resource(&a.owner, &owner))
+                        .map(|a| (a.slot, a.id.clone()))
+                        .collect::<BTreeMap<_, _>>();
+                    if build.weapon != weapon || build.artifacts != artifacts {
+                        return Err(invalid(
+                            "current-loadout evaluation cannot reassign equipment",
+                        ));
+                    }
+                }
+            }
+            AssignmentDomain::MoveOnly {
+                allocation,
+                movement,
+                donor_fallback,
+            } => {
+                let mut baseline = spec.clone();
+                baseline.assignments = AssignmentDomain::CurrentLoadout;
+                allocation.validate(account, &baseline)?;
+                crate::comparison::validate_move_only(
+                    allocation,
+                    self,
+                    account,
+                    movement,
+                    donor_fallback.as_ref(),
+                )?;
+            }
+            AssignmentDomain::ReservedMove { movement } => {
+                account.validate_move(movement)?;
+                if !self.teams.iter().flat_map(|t| &t.builds).any(|b| {
+                    b.character == movement.recipient
+                        && (b.weapon.as_ref() == Some(&movement.item)
+                            || b.artifacts.values().any(|i| i == &movement.item))
+                }) {
+                    return Err(invalid(
+                        "recipient must participate and use the reserved item",
+                    ));
+                }
+            }
+        }
+        if self.score_vector
+            != ScoreVector::aggregate(
+                &self
+                    .teams
+                    .iter()
+                    .map(|t| t.score_vector.clone())
+                    .collect::<Vec<_>>(),
+            )?
+        {
+            return Err(invalid(
+                "allocation vector must be the equal-weight encounter mean",
+            ));
         }
         if self.presentation_score != spec.objective.score(&self.score_vector)? {
             return Err(invalid("presentation score does not match objective"));
+        }
+        if spec.constraints.required_rules.iter().any(|rule| {
+            !self
+                .constraints
+                .iter()
+                .any(|c| &c.rule == rule && c.hard && c.satisfied)
+        }) {
+            return Err(invalid("required hard rule has no satisfied outcome"));
         }
         if self.constraints.iter().any(|c| c.hard && !c.satisfied) {
             return Err(invalid("ranked allocation violates hard constraint"));
@@ -580,7 +826,7 @@ pub struct SearchCounters {
     pub allocation_nodes: Counter,
     pub pruned_nodes: Counter,
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SearchLimit {
     BuildNodes,
@@ -588,9 +834,17 @@ pub enum SearchLimit {
     AllocationNodes,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum FrontierPresentation {
+    Exhaustive,
+    Truncated { omitted: Counter },
+    AmongReturned,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SearchReport {
     pub status: SearchStatus,
+    pub frontier: FrontierPresentation,
     pub counters: SearchCounters,
     pub domain: String,
     pub limits_reached: Vec<SearchLimit>,
@@ -651,6 +905,15 @@ impl DecisionResult {
                 "inconsistent completeness or bound evidence",
             ));
         }
+        if self.search.status == SearchStatus::Infeasible
+            && matches!(self.search.frontier, FrontierPresentation::Truncated { .. })
+        {
+            return Err(ContractError::new(
+                IssueCode::InvalidSearchReport,
+                "/search/frontier",
+                "empty feasible domain cannot omit frontier allocations",
+            ));
+        }
         if self.search.status == SearchStatus::Complete && self.allocations.is_empty() {
             return Err(ContractError::new(
                 IssueCode::InvalidSearchReport,
@@ -676,6 +939,69 @@ impl DecisionResult {
                 "too many returned allocations",
             ));
         }
+        if self.reasons.len() > MAX_RESULT_REASONS
+            || self.exclusions.len() > MAX_DIAGNOSTICS
+            || self.uncertainty.len() > MAX_DIAGNOSTICS
+            || self.provenance.len() > MAX_DIAGNOSTICS
+        {
+            return Err(ContractError::new(
+                IssueCode::ResourceLimit,
+                "/result",
+                "result metadata budget exceeded",
+            ));
+        }
+        if matches!(
+            self.search.frontier,
+            FrontierPresentation::Exhaustive | FrontierPresentation::Truncated { .. }
+        ) && !matches!(
+            self.search.status,
+            SearchStatus::Complete | SearchStatus::Infeasible
+        ) {
+            return Err(ContractError::new(
+                IssueCode::InvalidSearchReport,
+                "/search/frontier",
+                "unsearched space cannot have an exhaustive frontier",
+            ));
+        }
+        if self.search.counters.build_nodes > self.spec.search.max_build_nodes
+            || self.search.counters.team_nodes > self.spec.search.max_team_nodes
+            || self.search.counters.allocation_nodes > self.spec.search.max_allocation_nodes
+            || self.search.justified_upper_bound.is_some_and(|bound| {
+                self.allocations
+                    .first()
+                    .is_some_and(|a| bound < a.presentation_score)
+            })
+        {
+            return Err(ContractError::new(
+                IssueCode::InvalidSearchReport,
+                "/search",
+                "work counters or upper bound contradict results",
+            ));
+        }
+        let mut reached = BTreeSet::new();
+        for limit in &self.search.limits_reached {
+            let (count, maximum) = match limit {
+                SearchLimit::BuildNodes => (
+                    self.search.counters.build_nodes,
+                    self.spec.search.max_build_nodes,
+                ),
+                SearchLimit::TeamNodes => (
+                    self.search.counters.team_nodes,
+                    self.spec.search.max_team_nodes,
+                ),
+                SearchLimit::AllocationNodes => (
+                    self.search.counters.allocation_nodes,
+                    self.spec.search.max_allocation_nodes,
+                ),
+            };
+            if count != maximum || !reached.insert(limit) {
+                return Err(ContractError::new(
+                    IssueCode::InvalidSearchReport,
+                    "/search/limits_reached",
+                    "each reached limit must uniquely identify an exhausted node budget",
+                ));
+            }
+        }
         let mut ids = BTreeSet::new();
         for allocation in &self.allocations {
             if !ids.insert(&allocation.id) {
@@ -687,8 +1013,72 @@ impl DecisionResult {
             }
             allocation.validate(account.snapshot(), &self.spec)?;
         }
+        if matches!(
+            self.search.frontier,
+            FrontierPresentation::Truncated {
+                omitted: Counter(0)
+            }
+        ) {
+            return Err(ContractError::new(
+                IssueCode::InvalidSearchReport,
+                "/search/frontier",
+                "truncation must omit at least one frontier allocation",
+            ));
+        }
+        for allocation in &self.allocations {
+            if !matches!(self.search.frontier, FrontierPresentation::AmongReturned)
+                && (matches!(allocation.pareto, ParetoStatus::Unknown)
+                    || allocation
+                        .score_vector
+                        .dimensions
+                        .values()
+                        .any(|m| matches!(m, Metric::Unavailable { .. })))
+            {
+                return Err(ContractError::new(
+                    IssueCode::InvalidSearchReport,
+                    "/search/frontier",
+                    "global frontier presentation needs comparable classified vectors",
+                ));
+            }
+            let dominators = self
+                .allocations
+                .iter()
+                .filter(|other| other.id != allocation.id)
+                .filter_map(|other| {
+                    match other.score_vector.pareto_against(&allocation.score_vector) {
+                        Ok(ParetoRelation::Dominates) => Some(other.id.clone()),
+                        _ => None,
+                    }
+                })
+                .collect::<BTreeSet<_>>();
+            match &allocation.pareto {
+                ParetoStatus::Frontier
+                    if !dominators.is_empty()
+                        || allocation
+                            .score_vector
+                            .dimensions
+                            .values()
+                            .any(|m| matches!(m, Metric::Unavailable { .. })) =>
+                {
+                    return Err(ContractError::new(
+                        IssueCode::InvalidSearchReport,
+                        "/pareto",
+                        "unsupported frontier claim",
+                    ));
+                }
+                ParetoStatus::Dominated { by }
+                    if by.is_empty() || by.iter().any(|id| !dominators.contains(id)) =>
+                {
+                    return Err(ContractError::new(
+                        IssueCode::InvalidSearchReport,
+                        "/pareto",
+                        "dominance needs returned witnesses",
+                    ));
+                }
+                _ => {}
+            }
+        }
         let mut reasons = BTreeSet::new();
-        // Causes must precede effects, simultaneously forbidding cycles and dangling causes.
         for reason in &self.reasons {
             if reason.causes.iter().any(|c| !reasons.contains(c))
                 || !reasons.insert(reason.id.clone())
@@ -722,6 +1112,13 @@ impl DecisionResult {
                 }
             }
         }
+        if wire::encode(self)?.len() > MAX_RESULT_BYTES {
+            return Err(ContractError::new(
+                IssueCode::ResourceLimit,
+                "/result",
+                "result exceeds byte budget",
+            ));
+        }
         Ok(())
     }
 }
@@ -736,25 +1133,29 @@ pub struct CharacterChange {
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum ImprovementClaim {
-    ProvenWithinDeclaredDomain,
+pub enum ComparisonClaim {
+    ExactDifference,
     BestFoundDifference,
     NotComparable,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct DonorChange {
+    pub availability: AvailabilityId,
+    pub forms: Vec<CharacterChange>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ComparisonResult {
-    pub movement: ItemMove,
+    pub comparison: ComparisonSpec,
     pub original_owner: OwnerRef,
-    pub before_ownership: BTreeMap<ItemId, OwnerRef>,
-    pub after_ownership: BTreeMap<ItemId, OwnerRef>,
     pub before: DecisionResult,
     pub after: DecisionResult,
     pub recipient: CharacterChange,
-    pub donor: Option<CharacterChange>,
+    pub donor: Option<DonorChange>,
     pub other_changes: Vec<CharacterChange>,
     pub global_delta: Metric,
-    pub claim: ImprovementClaim,
+    pub claim: ComparisonClaim,
     pub reasons: Vec<CausalReason>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

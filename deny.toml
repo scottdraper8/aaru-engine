@@ -7,8 +7,6 @@ all-features = true
 allow = ["MIT", "Apache-2.0", "BSD-3-Clause", "Unicode-3.0"]
 confidence-threshold = 0.95
 
-# This gate checks dependency licenses. First-party unpublished crates use the
-# exact checked-in PolyForm Strict license, independently enforced by repo-policy.
 [licenses.private]
 ignore = true
 

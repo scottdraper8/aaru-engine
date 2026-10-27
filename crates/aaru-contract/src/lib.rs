@@ -1,18 +1,19 @@
-//! Frozen shared inventory and worker/UI boundary. No mechanics ontology or DOM code.
 pub mod account;
 pub mod comparison;
 pub mod decision;
+pub mod normalization;
 pub mod numeric;
 pub mod prepared;
 pub mod protocol;
 pub mod sensitivity;
 pub mod wire;
+pub mod work;
 
 pub use account::*;
-pub use comparison::ownership;
 pub use decision::*;
+pub use normalization::*;
 pub use numeric::{Fixed, NumericError};
-pub use prepared::PreparedRegistry;
+pub use prepared::*;
 pub use protocol::*;
 use serde::{Deserialize, Serialize};
 
@@ -40,6 +41,8 @@ macro_rules! identifier {
 identifier!(
     SnapshotId,
     CharacterId,
+    AvailabilityId,
+    SessionId,
     ItemId,
     DefinitionId,
     RequestId,
@@ -75,7 +78,6 @@ version!(
     CatalogVersion
 );
 
-/// JS-safe monotonic generation/counter. Wire representation is a decimal string.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct Counter(pub u64);
@@ -133,7 +135,7 @@ impl Digest {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Fidelity {
     ExactUnderModel,
@@ -186,6 +188,8 @@ pub enum IssueCode {
     NumericOverflow,
     InexactInput,
     StaleGeneration,
+    UnknownAvailability,
+    StaleAuthority,
     StalePrepared,
     UnknownRequest,
     Cancelled,
@@ -220,7 +224,6 @@ pub enum Parameter {
 #[serde(deny_unknown_fields)]
 pub struct ImportIssue {
     pub code: IssueCode,
-    /// RFC 6901 JSON pointer; empty means the whole document.
     pub path: String,
     pub severity: Severity,
     pub parameters: std::collections::BTreeMap<String, Parameter>,

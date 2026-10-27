@@ -1,23 +1,10 @@
 minimum_pre_commit_version: '4.6.2'
 exclude: ^\.agent-docs/(genshin_decision_engine_design_memo\.md|behavioral_testing_overhaul_agent_protocol\.md|Evidence_Governed_Agentic_Reverse_Engineering\.pdf)$
 repos:
-  - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c # v6.0.0
-    hooks:
-      - id: trailing-whitespace
-      - id: end-of-file-fixer
-      - id: check-yaml
-      - id: check-json
-      - id: check-toml
-      - id: check-merge-conflict
-      - id: check-case-conflict
-      - id: check-added-large-files
-        args: ['--maxkb=2048']
-      - id: detect-private-key
   - repo: local
     hooks:
       - id: repo-policy
-        name: Rust repository security and check-integrity policy
+        name: Rust repository hygiene, security and check-integrity policy
         entry: cargo run --locked --quiet -p aaru-repo-policy
         language: system
         pass_filenames: false
