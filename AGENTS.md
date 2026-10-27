@@ -32,6 +32,9 @@ scope decisions. The two testing references in that directory govern evidence.
 - No obsolete code, compatibility shims, abandoned approaches, or unused files.
   Replace pre-release designs cleanly. Keep documentation lean and current.
 - User docs are plain English for nontechnical players, not contribution guides.
+- All player-facing features/tools follow `.agent-docs/PRODUCT_LANGUAGE.md`:
+  Genshin/Sumeru/Aaru themed, accurate terminology, plain-English action labels,
+  spoilers avoided, no unverified lore presented as fact.
 - License: PolyForm Strict 1.0.0, not PolyForm Noncommercial. Do not describe this
   as permissively licensed or OSI open source. Respect third-party attribution.
 - Respect `.agent-deny`; never inspect secrets or dependency/generated output.

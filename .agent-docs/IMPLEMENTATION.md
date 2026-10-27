@@ -75,6 +75,12 @@ search, real native/browser boundaries and targeted mutation/fault challenges.
 Claims must name domain, oracle, reality/substitution, provenance and uncertainty.
 Keep a compact current claim-evidence matrix, not a ledger of every action.
 
+## Player-facing identity
+
+Follow `PRODUCT_LANGUAGE.md`: Genshin/Sumeru/Aaru-themed user-facing features and
+tools, accurate quest terminology, novice-readable labels, original accessible
+styling, no unverified lore claims or spoilers by default. Preserve Aaru Engine.
+
 ## Architecture and delivery
 
 Rust engine library with strict typed state and data-driven mechanics; WASM

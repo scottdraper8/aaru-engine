@@ -26,6 +26,7 @@ in execution.” No release until all material gates have supporting evidence.
 | Clarification: Rust | All first-party application/UI/tests/repository tooling use Rust; static HTML/CSS and generated WASM bindings are allowed. Rust repo policy, six behavioral fault-test families, formatting and strict Clippy have executed successfully. No Python/Node project stack. |
 | Clarification: PUBLIC repository | Applied and verified via GitHub API. Do not revert to private or cite private-tier restrictions as blockers. |
 | Clarification: PDF is reference only | No PDF extraction/parsing/generation/linting in hooks or CI. One-time text extraction is solely a reading aid. |
+| Clarification: Genshin-themed user-facing systems | Follow `PRODUCT_LANGUAGE.md`; Sumeru/Aaru identity, correct game/quest terminology and novice-readable actions. Verify lore, avoid spoilers and unlicensed assets. |
 
 ## Current external configuration evidence
 
