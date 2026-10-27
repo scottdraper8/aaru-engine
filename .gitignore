@@ -18,6 +18,7 @@ test-results/
 .agent-docs/tmp/
 .venv/
 __pycache__/
+.ruff_cache/
 *.pyc
 .DS_Store
 Thumbs.db

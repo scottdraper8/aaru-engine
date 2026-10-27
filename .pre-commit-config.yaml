@@ -14,6 +14,11 @@ repos:
       - id: check-added-large-files
         args: ['--maxkb=2048']
       - id: detect-private-key
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: 25bcf95026b96e2dd3c0aec3090c3d6ef6ca2e6c # v0.17.3
+    hooks:
+      - id: ruff-check
+      - id: ruff-format
   - repo: local
     hooks:
       - id: repo-policy
