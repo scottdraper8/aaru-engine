@@ -1,10 +1,10 @@
-# Shared schema 2 — H0 material and strict-shape candidate
+# Shared schema 2 — accepted material native subgate
 
 `crates/aaru-contract` owns the shared Rust types, validators and pure state
 machines. This document defines adapter obligations. **Native G1 was accepted at
-1b66491/run40582912311. H0's repaired native candidate passed independent review,
-but its staged/hosted acceptance remains pending and is not covered by G1.
-Engine/UI consumers must not start yet.** The sibling-worker design
+1b66491/run40582912311. H0-M material/strict-shape native subgate is accepted at
+50119ab/run40609987311 after independent/staged/hosted gates. Broader P1a/H0
+public-interface/runtime gates remain; engine/UI consumers must not start yet.** The sibling-worker design
 is approved; its implementation, timing, platform feasibility and product are not.
 No engine, UI builder source or WorkerEvent implementation is supplied here.
 
@@ -635,8 +635,11 @@ acceptance. Current H0 evidence is separate: `tmp/h0-material-contract-evidence.
 `tmp/h0-shape-repair-evidence.md` and `tmp/h0-shape-repair-review-evidence.md`.
 Repaired87 contract/20 policy/4 Git tests, strict native/contract-WASM and unchanged
 18+2 original probes pass; independent repair review also executed4 own controls.
-The historical16pass/2fail review remains unchanged. Staged/hosted gates remain;
-this native evidence does not establish importer, browser or release acceptance.
+The historical16pass/2fail review remains unchanged. Parent inspected the complete
+staged16 files/new tests, all-files/hooks/security passed, exact50119ab hosted
+40609987311 passed Linux/Windows/security/Quality. `tmp/H0_MATERIAL_ACCEPTANCE.md`
+closes only the material native subgate, not public-interface/importer/browser/release
+acceptance. Further shared contracts must be frozen before consumer source leases.
 
 Executed on Linux2026-10-27, Rust/Cargo1.98.1, base HEAD72f2048 plus unstaged
 integration. Current source/test/dependency manifest, excluding this document:

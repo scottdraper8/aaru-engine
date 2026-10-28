@@ -82,9 +82,10 @@ still unverified. No direct-main bypass/auto-merge. Linux BLOCK/Windows AUDIT ha
 first in EVERY job, least privilege/endpoints unchanged. No paid subscriptions.
 
 Native G1 baseline accepted at1b664913a3d25f86e97b18b1069a442276e9b760,
-run40582912311attempt1 all Linux/Windows/security/Quality successful. Docs-only HEAD
-13f4f0efab4a925ea98c721fc7f0568d632de5a0/run40587254720 also all successful.
-Neither certifies current UNCOMMITTED H0. Historical5b9c64f Linux checkout failed;
+run40582912311attempt1 all Linux/Windows/security/Quality successful. Material native
+subgate H0-M accepted at50119ab8868ece6feaf8f0ff0ef5fa3953fa3a4e,
+run40609987311attempt1 all Linux/Windows/security/Quality successful. Parent decision
+tmp/H0_MATERIAL_ACCEPTANCE.md; NOT full P1a/H0/runtime or product acceptance. Historical5b9c64f Linux checkout failed;
 stuck40579865822 was cancelled, not relabeled green. Reviewed StepSecurityv2.22.3
 46b06cea07f9e64621fdf066ba77ac6915163d43 succeeded without reduced hardening; not
 universal resolver/root-cause proof. Prior failures/probes remain unchanged.
@@ -100,8 +101,9 @@ Rust variants (no compatibility alias). Permanent malformed/valid controls, actu
 request/control/recovery heads and3 restored behavioral faults support the repair.
 Full87/20/4/strict native+contractwasm and preserved18+2 owned probes now pass.
 Independent repair review repeated those and4 own controls with unchanged source:
-ACCEPTABLE for native staged/hosted handoff WITH runtime gates. **H0 acceptance
-remains withheld pending complete staged/hosted exact snapshot.**
+ACCEPTABLE for native staged/hosted handoff WITH runtime gates. Complete staged16
+files/new tests/all-files/normal hooks/security passed, then exact hosted50119ab
+passed. **H0-M material native accepted; broader P1a/H0 interfaces still open.**
 
 Current reports: tmp/G1_ACCEPTANCE.md; h0-material-contract-evidence.md;
 h0-material-review-evidence.md (historical FIX REQUIRED); h0-parent-availability-finding.md;
@@ -123,8 +125,8 @@ E engine/WASM runtime src/tests+fixture/mechanics CONTENT; U DOM/supervisor/brow
 src/tests/static original HTMLCSS/player help. Park both for shared changes, one
 reviewed fingerprint and explicit acknowledgments before resume.
 
-Next: close H0 exact staged/hosted gates. Read new p1-{engine,ui}-handoff-plan-evidence
-proposals; parent must reconcile actual inventory-presentation/persisted-UI/import
+Next: read new p1-{engine,ui}-handoff-plan-evidence proposals; parent must reconcile
+actual inventory-presentation/persisted-UI/import
 metadata gaps before source launch. Freeze public import/catalog/material and exact
 manifest/feature/entrypoint proposals. Allocate GENUINE initial E/U source,
 then PARK both for parent manifest/lock/build/loader/server integration; validate ALL
