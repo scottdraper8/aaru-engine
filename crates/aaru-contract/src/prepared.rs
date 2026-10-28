@@ -153,9 +153,13 @@ impl StorageObservation {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ActiveSelection {
+    #[serde(deserialize_with = "crate::wire::deserialize_empty_variant")]
     ObservedDurable,
+    #[serde(deserialize_with = "crate::wire::deserialize_empty_variant")]
     EmptySession,
-    RetainedSession { backup: Arc<Backup> },
+    RetainedSession {
+        backup: Arc<Backup>,
+    },
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

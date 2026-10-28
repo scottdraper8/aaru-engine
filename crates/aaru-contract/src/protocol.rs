@@ -46,7 +46,10 @@ pub enum ImportInput {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum StorageDisposition {
-    Persisted { receipt: CommitReceipt },
+    Persisted {
+        receipt: CommitReceipt,
+    },
+    #[serde(deserialize_with = "crate::wire::deserialize_empty_variant")]
     SessionOnly,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -58,6 +61,7 @@ pub enum ExportFormat {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Request {
+    #[serde(deserialize_with = "crate::wire::deserialize_empty_variant")]
     GetCatalog,
     PrepareImport {
         input: ImportInput,
@@ -78,6 +82,7 @@ pub enum Request {
     Bootstrap {
         input: RecoveryInput,
     },
+    #[serde(deserialize_with = "crate::wire::deserialize_empty_variant")]
     DiscardSession,
     Sensitivity {
         baseline: Arc<DecisionSpec>,

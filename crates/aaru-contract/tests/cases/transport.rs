@@ -99,6 +99,7 @@ fn saving_case() -> (DomGate, PreparedHead, StorageReservation) {
         characters: 8,
         weapons: 2,
         artifacts: 0,
+        material_kinds: 0,
         issues: vec![],
     };
     gate.prepared(prepared.clone()).unwrap();
@@ -200,7 +201,7 @@ fn compact_transport_rejects_wrong_routes_attachments_duplicates_and_oversized_p
     frame.to = Endpoint::UiSupervisor;
     frame.step = Counter(1);
     assert!(encode_control(&frame).is_err());
-    let duplicate = text.replacen("\"version\":1", "\"version\":1,\"version\":1", 1);
+    let duplicate = text.replacen("\"version\":2", "\"version\":2,\"version\":2", 1);
     assert_eq!(
         decode_control(&duplicate).unwrap_err().code,
         IssueCode::DuplicateProperty

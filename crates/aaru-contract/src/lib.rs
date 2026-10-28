@@ -61,24 +61,24 @@ identifier!(
 );
 
 macro_rules! version {
-    ($($name:ident),+ $(,)?) => {$ (
+    ($($name:ident = $number:literal),+ $(,)?) => {$ (
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
         #[serde(try_from = "u16", into = "u16")]
         pub struct $name;
         impl TryFrom<u16> for $name {
             type Error = String;
             fn try_from(value: u16) -> Result<Self, Self::Error> {
-                if value == 1 { Ok(Self) } else { Err(format!("unsupported {}: {value}", stringify!($name))) }
+                if value == $number { Ok(Self) } else { Err(format!("unsupported {}: {value}", stringify!($name))) }
             }
         }
-        impl From<$name> for u16 { fn from(_: $name) -> Self { 1 } }
+        impl From<$name> for u16 { fn from(_: $name) -> Self { $number } }
     )+};
 }
 version!(
-    AccountVersion,
-    ProtocolVersion,
-    ImportProfileVersion,
-    CatalogVersion
+    AccountVersion = 2,
+    ProtocolVersion = 2,
+    ImportProfileVersion = 1,
+    CatalogVersion = 1
 );
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]

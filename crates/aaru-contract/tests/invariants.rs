@@ -4,8 +4,12 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     sync::Arc,
 };
+#[path = "cases/materials.rs"]
+mod material_cases;
 #[path = "cases/references.rs"]
 mod reference_cases;
+#[path = "cases/strict_shapes.rs"]
+mod strict_shape_cases;
 #[path = "cases/transport.rs"]
 mod transport_cases;
 
@@ -85,7 +89,8 @@ fn account() -> AccountSnapshot {
                 .collect(),
         ),
         weapons: supplied(vec![weapon("w0"), weapon("w1")]),
-        artifacts: Section::Omitted,
+        artifacts: Section::Omitted {},
+        materials: Section::Omitted {},
         preferences: AllocationPreferences::default(),
         source_archive: None,
         provenance: vec![],
@@ -462,13 +467,13 @@ fn wire_boundary_rejects_information_loss_and_resource_abuse_before_typed_decode
         IssueCode::ResourceLimit
     );
     let mut request = serde_json::to_value(request("r", Request::GetCatalog, 0)).unwrap();
-    request["protocol_version"] = 2.into();
+    request["protocol_version"] = 3.into();
     assert_eq!(
         wire::decode_request(&request.to_string()).unwrap_err().code,
         IssueCode::UnsupportedVersion
     );
     assert!(
-        wire::decode::<AccountSnapshot>(r#"{"schema_version":1,"id":"x","synthetic":true}"#)
+        wire::decode::<AccountSnapshot>(r#"{"schema_version":2,"id":"x","synthetic":true}"#)
             .is_err()
     );
 }

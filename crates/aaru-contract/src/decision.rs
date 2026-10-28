@@ -19,6 +19,7 @@ pub enum MechanicsRef {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum EvaluationScope {
+    #[serde(deserialize_with = "crate::wire::deserialize_empty_variant")]
     WholeSuppliedInventory,
     Subset {
         characters: BTreeSet<CharacterId>,
@@ -228,8 +229,12 @@ pub enum ParetoRelation {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ParetoStatus {
+    #[serde(deserialize_with = "crate::wire::deserialize_empty_variant")]
     Frontier,
-    Dominated { by: Vec<AllocationId> },
+    Dominated {
+        by: Vec<AllocationId>,
+    },
+    #[serde(deserialize_with = "crate::wire::deserialize_empty_variant")]
     Unknown,
 }
 
@@ -453,7 +458,9 @@ pub struct ItemMove {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum AssignmentDomain {
+    #[serde(deserialize_with = "crate::wire::deserialize_empty_variant")]
     Unrestricted,
+    #[serde(deserialize_with = "crate::wire::deserialize_empty_variant")]
     CurrentLoadout,
     ReservedMove {
         movement: ItemMove,
@@ -471,6 +478,7 @@ pub enum ComparisonMode {
         allocation: Box<Allocation>,
         donor_fallback: Option<ItemId>,
     },
+    #[serde(deserialize_with = "crate::wire::deserialize_empty_variant")]
     UnrestrictedOptimum,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -878,8 +886,12 @@ pub enum SearchLimit {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum FrontierPresentation {
+    #[serde(deserialize_with = "crate::wire::deserialize_empty_variant")]
     Exhaustive,
-    Truncated { omitted: Counter },
+    Truncated {
+        omitted: Counter,
+    },
+    #[serde(deserialize_with = "crate::wire::deserialize_empty_variant")]
     AmongReturned,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

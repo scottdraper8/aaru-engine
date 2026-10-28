@@ -9,6 +9,16 @@ pub const MAX_DEPTH: usize = 64;
 pub const MAX_STRING_BYTES: usize = 4096;
 pub const MAX_CONTAINER_ENTRIES: usize = 65536;
 
+pub(crate) fn deserialize_empty_variant<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<(), D::Error> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Empty {}
+    let _: Empty = serde::Deserialize::deserialize(deserializer)?;
+    Ok(())
+}
+
 pub fn decode<T: DeserializeOwned>(text: &str) -> ContractResult<T> {
     if text.len() > MAX_WIRE_BYTES {
         return Err(ContractError::new(
@@ -204,6 +214,13 @@ pub fn account_semantic_digest(account: &AccountSnapshot) -> ContractResult<Dige
             if let Some(stats) = &mut record.substats {
                 stats.sort_by(|a, b| a.key.cmp(&b.key));
             }
+        }
+    }
+    if let Section::Supplied { records, .. } = &mut normalized.materials {
+        records.sort_by(|a, b| a.definition.cmp(&b.definition));
+        for record in records {
+            record.source = None;
+            record.provenance.clear();
         }
     }
     normalized

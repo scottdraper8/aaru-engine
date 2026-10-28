@@ -4,7 +4,9 @@ use std::sync::Weak;
 const ACCEPTED_UI: &[u8] = b"objective=energy;targets=2;form=alternate";
 
 fn private_backup(name: &str) -> (Arc<Backup>, Weak<SourceArchive>) {
-    let utf8 = format!("{{\"format\":\"GOOD\",\"version\":3,\"source\":\"{name}\"}}");
+    let utf8 = format!(
+        "{{\"format\":\"GOOD\",\"version\":3,\"source\":\"{name}\",\"materials\":{{\"syn:ore\":18446744073709551615}}}}"
+    );
     let source = Arc::new(SourceArchive {
         format: SourceFormat::Good {
             dialect_version: 3,
@@ -17,9 +19,23 @@ fn private_backup(name: &str) -> (Arc<Backup>, Weak<SourceArchive>) {
     let account = ValidatedAccount::imported(AccountSnapshot {
         schema_version: AccountVersion,
         id: id(name),
-        characters: Section::Omitted,
-        weapons: Section::Omitted,
-        artifacts: Section::Omitted,
+        characters: Section::Omitted {},
+        weapons: Section::Omitted {},
+        artifacts: Section::Omitted {},
+        materials: supplied(vec![
+            MaterialBalance {
+                definition: id("syn:ore"),
+                quantity: MaterialQuantity::Known {
+                    amount: Counter(u64::MAX),
+                },
+                source: Some(SourceRef {
+                    archive_digest: source.sha256.clone(),
+                    pointer: "/materials/syn:ore".into(),
+                }),
+                provenance: vec![],
+            },
+            crate::material_cases::balance("syn:unknown", MaterialQuantity::Unknown {}),
+        ]),
         preferences: AllocationPreferences::default(),
         source_archive: Some(source),
         provenance: vec![],
@@ -245,6 +261,7 @@ impl Lifecycle {
             characters: 0,
             weapons: 0,
             artifacts: 0,
+            material_kinds: backup.account.materials.records().len() as u16,
             issues: vec![],
         };
         self.dom.prepared(head.clone()).unwrap();
@@ -347,6 +364,85 @@ fn capability() -> EvaluationCapability {
         supported: [Operation::ExportCanonical].into(),
         blockers: vec![],
         scope: EvaluationScope::WholeSuppliedInventory,
+    }
+}
+
+#[test]
+fn nonempty_materials_survive_prepared_session_durable_and_lost_ack_recovery() {
+    for durable in [false, true] {
+        for acknowledge in [false, true] {
+            let saved = private_backup("material-saved").0;
+            let candidate = private_backup("material-candidate").0;
+            let expected = candidate.account.materials.clone();
+            let original = candidate.account.source_archive.clone();
+            let record = Arc::new(DurableRecord {
+                revision: Counter(7),
+                backup: Some(saved),
+            });
+            let mut life =
+                Lifecycle::bootstrap(observed(record), context().epochs, Counter(0), None);
+            life.edit(
+                "material-ui",
+                FormEdit::EncounterTargets {
+                    encounter: 0,
+                    count: 2,
+                },
+                ACCEPTED_UI,
+            );
+            let (head, mut registry) = life.prepare(candidate, "material-prepare", false);
+            assert_eq!(head.material_kinds, 2);
+            life.dom
+                .stage_account_transition(transition(&life.dom, &head, ACCEPTED_UI))
+                .unwrap();
+            let storage = if durable {
+                let (_, record) = life.reserve(&head);
+                let encoded = wire::encode(&record).unwrap();
+                let decoded: DurableRecord = wire::decode(&encoded).unwrap();
+                assert_eq!(decoded.backup.as_ref().unwrap().account.materials, expected);
+                let receipt = life.dom.transaction_complete(&head.binding).unwrap();
+                life.session
+                    .storage_committed(&mut life.machine, &receipt)
+                    .unwrap();
+                StorageDisposition::Persisted { receipt }
+            } else {
+                life.promote(&head);
+                StorageDisposition::SessionOnly
+            };
+            if acknowledge {
+                life.activate(&head, &mut registry, storage);
+                assert_eq!(registry.active().unwrap().snapshot().materials, expected);
+            }
+            let input = life.machine.recovery_input();
+            let bytes = wire::encode(&input).unwrap();
+            let decoded: RecoveryInput = wire::decode(&bytes).unwrap();
+            let restored = decoded.restore(None).unwrap().unwrap();
+            assert_eq!(restored.snapshot().materials, expected);
+            assert_eq!(restored.snapshot().source_archive, original);
+            assert_eq!(
+                restored.material_balance(&id("syn:ore")),
+                MaterialQuantity::Known {
+                    amount: Counter(u64::MAX)
+                }
+            );
+            assert_eq!(
+                restored.material_balance(&id("syn:unknown")),
+                MaterialQuantity::Unknown {}
+            );
+            let rebuilt = life.reconstruct();
+            assert_eq!(
+                rebuilt.machine.active().unwrap().account.materials,
+                expected
+            );
+            assert_eq!(rebuilt.dom.intended(), Some(&head.account));
+            assert_eq!(
+                rebuilt.dom.checkpoint().unwrap().account_semantics,
+                Some(head.account.semantics)
+            );
+            assert_eq!(
+                rebuilt.machine.durable_head().unwrap().unwrap().revision,
+                Counter(if durable { 8 } else { 7 })
+            );
+        }
     }
 }
 

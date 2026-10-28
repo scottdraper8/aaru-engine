@@ -6,6 +6,7 @@ pub const MAX_INPUT_BYTES: usize = 16 * 1024 * 1024;
 pub const MAX_CHARACTERS: usize = 256;
 pub const MAX_WEAPONS: usize = 4096;
 pub const MAX_ARTIFACTS: usize = 16384;
+pub const MAX_MATERIAL_KINDS: usize = 16384;
 pub const MAX_DIAGNOSTICS: usize = 128;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -22,7 +23,7 @@ impl SampleId {
     }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum Completeness {
     Unspecified,
     DeclaredPartial,
@@ -40,6 +41,7 @@ pub enum InventorySection {
     Characters,
     Weapons,
     Artifacts,
+    Materials,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -50,7 +52,7 @@ pub struct ImportDeclaration {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "coverage", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Section<T> {
-    Omitted,
+    Omitted {},
     Supplied {
         completeness: Completeness,
         records: Vec<T>,
@@ -59,7 +61,7 @@ pub enum Section<T> {
 impl<T> Section<T> {
     pub fn records(&self) -> &[T] {
         match self {
-            Self::Omitted => &[],
+            Self::Omitted {} => &[],
             Self::Supplied { records, .. } => records,
         }
     }
@@ -117,6 +119,20 @@ pub struct SourceRef {
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct MaterialBalance {
+    pub definition: DefinitionId,
+    pub quantity: MaterialQuantity,
+    pub source: Option<SourceRef>,
+    pub provenance: Vec<Provenance>,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
+pub enum MaterialQuantity {
+    Unknown {},
+    Known { amount: Counter },
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Talents {
     pub normal: Option<u16>,
     pub skill: Option<u16>,
@@ -141,6 +157,7 @@ pub enum CharacterAvailability {
         owned: AvailabilityId,
         identity: DefinitionId,
     },
+    #[serde(deserialize_with = "crate::wire::deserialize_empty_variant")]
     Unknown,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -277,6 +294,7 @@ pub struct AccountSnapshot {
     pub characters: Section<OwnedCharacter>,
     pub weapons: Section<WeaponInstance>,
     pub artifacts: Section<ArtifactInstance>,
+    pub materials: Section<MaterialBalance>,
     pub preferences: AllocationPreferences,
     pub source_archive: Option<std::sync::Arc<SourceArchive>>,
     pub provenance: Vec<Provenance>,
@@ -333,6 +351,23 @@ impl ValidatedAccount {
     pub fn shared_snapshot(&self) -> std::sync::Arc<AccountSnapshot> {
         self.snapshot.clone()
     }
+    pub fn material_balance(&self, definition: &DefinitionId) -> MaterialQuantity {
+        self.snapshot
+            .materials
+            .records()
+            .iter()
+            .find(|balance| &balance.definition == definition)
+            .map_or_else(
+                || {
+                    if self.snapshot.materials.is_declared_complete() {
+                        MaterialQuantity::Known { amount: Counter(0) }
+                    } else {
+                        MaterialQuantity::Unknown {}
+                    }
+                },
+                |balance| balance.quantity,
+            )
+    }
     pub fn sample(&self) -> Option<SampleId> {
         self.sample
     }
@@ -366,6 +401,7 @@ impl AccountSnapshot {
                 }
                 InventorySection::Weapons => self.weapons.declare(declaration.completeness)?,
                 InventorySection::Artifacts => self.artifacts.declare(declaration.completeness)?,
+                InventorySection::Materials => self.materials.declare(declaration.completeness)?,
             }
         }
         self.validate()?;
@@ -376,6 +412,7 @@ impl AccountSnapshot {
         if self.characters.records().len() > MAX_CHARACTERS
             || self.weapons.records().len() > MAX_WEAPONS
             || self.artifacts.records().len() > MAX_ARTIFACTS
+            || self.materials.records().len() > MAX_MATERIAL_KINDS
         {
             return fail(
                 IssueCode::ResourceLimit,
@@ -390,6 +427,7 @@ impl AccountSnapshot {
             section_completeness(&self.characters),
             section_completeness(&self.weapons),
             section_completeness(&self.artifacts),
+            section_completeness(&self.materials),
         ]
         .into_iter()
         .flatten()
@@ -418,6 +456,24 @@ impl AccountSnapshot {
                     _ => {}
                 }
             }
+        }
+        let mut material_kinds = BTreeSet::new();
+        for balance in self.materials.records() {
+            if !material_kinds.insert(&balance.definition) {
+                return fail(
+                    IssueCode::DuplicateIdentity,
+                    "/materials",
+                    "duplicate material kind",
+                );
+            }
+            if balance.provenance.len() > MAX_DIAGNOSTICS {
+                return fail(
+                    IssueCode::ResourceLimit,
+                    "/materials",
+                    "material provenance budget exceeded",
+                );
+            }
+            self.validate_source(&balance.source)?;
         }
         let mut identities = BTreeSet::new();
         let mut characters = BTreeSet::new();
@@ -592,9 +648,7 @@ impl AccountSnapshot {
                     "missing source archive",
                 )
             })?;
-            if source.archive_digest != archive.sha256
-                || (!source.pointer.is_empty() && !source.pointer.starts_with('/'))
-            {
+            if source.archive_digest != archive.sha256 || !valid_source_pointer(&source.pointer) {
                 return Err(ContractError::new(
                     IssueCode::InvalidReference,
                     "/source",
@@ -678,9 +732,21 @@ impl AccountSnapshot {
         Ok(())
     }
 }
+fn valid_source_pointer(pointer: &str) -> bool {
+    if !pointer.is_empty() && !pointer.starts_with('/') {
+        return false;
+    }
+    let mut bytes = pointer.bytes();
+    while let Some(byte) = bytes.next() {
+        if byte == b'~' && !matches!(bytes.next(), Some(b'0' | b'1')) {
+            return false;
+        }
+    }
+    true
+}
 fn section_completeness<T>(section: &Section<T>) -> Option<&Completeness> {
     match section {
-        Section::Omitted => None,
+        Section::Omitted {} => None,
         Section::Supplied { completeness, .. } => Some(completeness),
     }
 }

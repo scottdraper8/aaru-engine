@@ -1,244 +1,155 @@
 # Aaru Engine — implementation contract
 
-## Product
+## Product and authority
 
-A local-first, beginner-friendly Genshin account decision website. First-party
-application code, browser UI, tests and repository tooling are written in Rust.
-Use WebAssembly with static HTML/CSS and generated bindings, not a Python/Node
-application or custom Python workflow. `pre-commit` is retained as explicitly
-requested; its implementation language does not authorize Python project code.
-No backend or game credentials required. Windows and Linux use the same browser
-UI. Authoritative intent is the full
-`genshin_decision_engine_design_memo.md`. Read it for nuance, not just this note.
+Build the FULL local-first, beginner-friendly Genshin account decision website for
+Windows and Linux. The complete `genshin_decision_engine_design_memo.md`, original
+16 owner requirements in `REQUIREMENTS.md`, and all19 functional/12 browser rows in
+`RELEASE_GATES.md` remain binding. Intermediate contracts, synthetic models and
+research are NOT a release-ready product or verified live-account DPS.
 
-The user authorized initialization, remote creation, and PUBLIC visibility.
-GitHub repository: `https://github.com/scottdraper8/aaru-engine` (public).
-Never automatically merge dependency updates.
+Read AGENTS and REQUIREMENTS before substantive work; read the full memo for
+architecture/scope. Both testing references govern evidence. The PDF is reference
+only: no PDF-specific hooks/CI/tooling or reference edits. Its ignored complete
+extraction is a reading aid, not an application workflow.
 
-The acceptance map in `REQUIREMENTS.md` tracks each original owner requirement
-and later clarification. Keep it current. It is not permission to scope the final
-product down to an illustrative demo. Intermediate slices are implementation
-milestones only; the requested endpoint remains a release-ready product.
-`RELEASE_GATES.md` maps memo capabilities to observable behavior and independent
-acceptance evidence, including roster/investment value beyond equipment moves.
+First-party application/UI/tests/repository tools use Rust. Static HTML/CSS and
+generated INITIALIZATION-ONLY WASM bindings/loaders are allowed, not handwritten
+JS/execute_script, Node/Python application/tool stacks or project shell scripts.
+Keep required external pre-commit4.6.2; its Python implementation is not permission
+to add first-party Python. Minimal code comments applies retroactively; retain only
+organizational headers/absolutely necessary explanation or tooling metadata.
 
-## Durable requirements
+Exact upstream PolyForm Strict1.0.0, exact tools/direct dependencies/immutable
+actions/framework hashes, Cargo.lock and locked installs remain enforced. No legacy
+aliases/shims/dead scaffolding, suppressions/ignored or focused tests, bypasses,
+skipped required jobs, weakened gates or automatic merging. All-files pre-commit
+BEFORE every normal hooked commit; complete staged blobs INCLUDING new files checked.
 
-1. PolyForm Strict 1.0.0, exact upstream license text and copyright notice.
-2. Exact dependency/tool versions, Cargo.lock, hash-locked external pre-commit
-   framework requirements, SHA-pinned actions/hooks. Locked installs; no unreviewed
-   lifecycle scripts. No Node project stack.
-3. pre-commit with Rust formatting, strict Clippy, behavioral tests, web lint and
-   repo-specific policy checks. No bypasses, suppressions, or skipped tests.
-4. Harden every hosted CI job with StepSecurity; least privilege, bounded time,
-   untrusted PR code isolated from secrets, Linux + Windows native validation,
-   production WASM build and real-browser checks. Rust advisories and dependency
-   policy enforced in CI. No unreasonable waiting periods.
-5. Dependabot opens security-fix PRs with exact direct pins, never auto-merges.
-   Security updates require repository alerts/security-update settings as well
-   as configuration. Keep required CI enforced through public main protection.
-6. Data before recommendations: extensive realistic synthetic account inventories
-   including unequipped weapons/artifacts, levels, ascensions, constellations,
-   talents, refinements, duplicates, locks, sparse/large/incomplete accounts.
-   Fixtures are fabricated, not real user data or verified live-game mechanics.
-7. Roster ownership comes from validated imports, never a hard-coded owned list.
-   GOOD is the first interoperability boundary. Battle Chronicle is future work:
-   it cannot supply the full unequipped inventory and authorization must be safe.
-8. Separate public mechanics/provenance from private account state. Import sizes,
-   shapes, numeric ranges, identity/references, unsupported data, and allocation
-   conflicts must be handled explicitly. Unknown data cannot silently become zero.
-9. Deterministic formulas/typed effect predicates, team-level interactions, energy,
-   field time, reaction/aura, sustain, special-system predicates, explicit objectives
-   and encounters; distinguish exact/estimated/qualitative/unknown evidence.
-10. Hard constraints before ranking; score vectors, objective weights, Pareto
-    frontier, non-overlapping multi-team selection, scarce item allocation,
-    artifact search, donor-aware counterfactuals and dependency invalidation.
-    Reproducibility includes account/mechanics/engine/objective/encounter versions.
-11. AI optional at the edges only; no model needed to use the engine. No invented
-    current/future kits. Research assertions in the memo need independent checking.
-12. Plain-English explanations from reason codes, visible assumptions, no fake DPS
-    or precision. Accessible responsive UI, progress/error/empty states, private
-    local import/export/reset, repeatable comparisons and understandable tradeoffs.
-13. Performance comes from measured representative workloads, deterministic pruning
-    and recomputation, not unexplained heuristic pair scores or weak test fixtures.
-14. No legacy code/shims or stale docs. Correctness/thoroughness over delivery speed.
-15. Self-explanatory code; no comments unless absolutely necessary. Organizational
-    headers are allowed. Apply retroactively to existing source/tests/tooling and
-    remove redundant narration and documentation duplicated by authoritative docs.
+## Runtime and data decisions
 
-The PDF is reference material only. No PDF-specific tooling in pre-commit or CI;
-its text extraction is a one-time reading aid, never a project workflow.
+Thin Rust DOM directly owns TWO sibling module Workers (Rust UI supervisor/engine)
+and their private MessageChannel. No nested workers/SharedArrayBuffer/giant DOM
+JSON/hash or account integers through JSNumber. DOM owns WebLock before private
+reads, actual IndexedDB lifecycle/settlement, compact authority, opaque immutable
+account+UI anchors, bounded pages and URLs/Blob ledger. Supervisor owns full UI/
+spec/codecs/contextual admission/checkpoints; engine owns import/catalog/mechanics/
+search. UI consumes public metadata, never engine-private scoring/guessed IDs.
 
-## Evidence discipline
+Preparation precedes durable reservation/Writing. Transaction COMPLETE commits,
+not request success/worker death/timeout. Install the exact account/UI pair in DOM
+before notification, exact ack/bind-once/ordered refresh, no preference resets on
+same-account edits. Replacement carries/resets settings only by explicit exact-target
+choice. Retained sessionB must not silently become savedA. Current corrupt/unreadable
+headers, historical head and unavailable reads are distinct. Memory discard is not
+durable erase; guarded fresh-store clearing is not authorized by failed reads alone.
 
-Follow `behavioral_testing_overhaul_agent_protocol.md` and
-`Evidence_Governed_Agentic_Reverse_Engineering.pdf` (both read in full at intake).
-During orchestration, the PDF's complete extracted text is available at ignored
-`.agent-docs/tmp/evidence-methodology.txt` for agents without PDF-reading tools.
-Mechanism, observed execution, intent, and correctness are distinct. Use normative
-hand-calculated cases, invariants/metamorphic checks, differential small-domain
-search, real native/browser boundaries and targeted mutation/fault challenges.
-Claims must name domain, oracle, reality/substitution, provenance and uncertainty.
-Keep a compact current claim-evidence matrix, not a ledger of every action.
+Budgets: raw GOOD/source archive16MiB; canonical Aaru offer/logical wire128MiB.
+EACH DecisionResult16MiB including nested decisions; complete comparison/sensitivity
+bodies128MiB INCLUDING own metadata; FINAL enclosing request/event independently
+128MiB INCLUDING wrapper. An exactly128MiB body need not fit after wrapping.
+Controls/pages16KiB, page24 rows maximum, source2 distinct across ALL holders,
+candidate/queued replacement1, extra caches32MiB, each worker linear max512MiB,
+Blob ledger256MiB. Account for copies/backings/callers/acks/exports across holders;
+compact unselected saved bodies to truthful heads. Native maxima aren't feasibility
+for every simultaneous workload. Search slices<=256 admitted units/4ms with real task
+yields; visible cancellation50ms. Whole codecs are terminable bulk, NOT4ms primitives.
+DOM invalidates authority and directly terminates BOTH siblings for cancellable work;
+durable reservation barriers remain non-cancellable and explicit.
 
-## Player-facing identity
+Preserve physical copies/owners/progression/locks/provenance, incomplete sections,
+mutually exclusive forms and omitted/partial/unknown/supplied-empty distinctions.
+GOOD presence isn't completeness, absent materials aren't zero/infinite, parser
+ranges aren't game legality, source positions aren't guaranteed cross-export identity.
+Use GOOD_REFERENCE's pinned documentation and exact ratio/unboosted talent semantics.
+Unknowns block only dependent claims, not unrelated supported inventory/equipment.
 
-Follow `PRODUCT_LANGUAGE.md`: Genshin/Sumeru/Aaru-themed user-facing features and
-tools, accurate quest terminology, novice-readable labels, original accessible
-styling, no unverified lore claims or spoilers by default. Preserve Aaru Engine.
+Deterministic checked arithmetic, explicit objectives/assumptions/encounters, unique
+resources, joint team/build/global Pareto search, donor/form opportunity costs and
+cold-vs-incremental recomputation must be real engine behavior. Roster marginal
+value and budgeted investment are DISTINCT operations, not equipment comparisons.
+Reasons resolve through SubjectContext and mandatory SessionGate.accept_result;
+ordinary accept rejects result terminals. Source/profile/engine/input versions and
+causal/sensitivity/limits remain visible; synthetic utility isn't verified DPS.
 
-## Architecture and delivery
+## Current evidence and blockers
 
-Rust engine library with strict typed state and data-driven mechanics; WASM
-adapter exposes structured errors/results. Rust browser UI (e.g. web-sys or a
-justified Rust UI framework), static HTML/CSS, generated JS glue only. Responsive
-bounded/asynchronous computation; no server-side inventory storage. Rust tooling
-owns builds/serving/security checks. Real browser tests also use Rust tooling,
-not a second Python/Node stack. Synthetic fixtures use the same import/evaluation
-path as user data. Public mechanics independently versioned; unsupported facts
-remain visible. Workspace foundation and Rust `aaru-repo-policy` already exist.
+Branch `feat/rust-decision-engine`; PUBLIC https://github.com/scottdraper8/aaru-engine.
+Main requires PR/admin enforcement/strict latest-base Quality gate (Actions app15368),
+resolved conversations, no force/deletion. Alerts/security fixes/secret scanning/push
+protection enabled, auto-merge disabled; actual pin-preserving Dependabot fix behavior
+still unverified. No direct-main bypass/auto-merge. Linux BLOCK/Windows AUDIT hardening
+first in EVERY job, least privilege/endpoints unchanged. No paid subscriptions.
 
-Use a thin Rust DOM controller and two directly owned sibling module Workers:
-private Rust UI supervisor and Rust engine. Large logical JSON, fingerprints and
-validation stay off the DOM thread; compact controls/pages are at most 16 KiB.
-The DOM owns Web Lock/IndexedDB settlement and opaque recovery/UI-state anchors.
-Cancellable bulk work can terminate both workers immediately; durable reservations
-remain non-cancellable. Keep 50 ms visible cancellation acceptance. Cooperative
-search retains 256-unit/4 ms slices; isolated terminable codecs are not falsely
-classified as short primitives. This design addresses observed >50 ms WASM calls;
-its implementation, memory and platform behavior still require real-browser proof.
+Native G1 baseline accepted at1b664913a3d25f86e97b18b1069a442276e9b760,
+run40582912311attempt1 all Linux/Windows/security/Quality successful. Docs-only HEAD
+13f4f0efab4a925ea98c721fc7f0568d632de5a0/run40587254720 also all successful.
+Neither certifies current UNCOMMITTED H0. Historical5b9c64f Linux checkout failed;
+stuck40579865822 was cancelled, not relabeled green. Reviewed StepSecurityv2.22.3
+46b06cea07f9e64621fdf066ba77ac6915163d43 succeeded without reduced hardening; not
+universal resolver/root-cause proof. Prior failures/probes remain unchanged.
 
-## Current state / next action
+H0 adds mandatory account schema2 material knowledge/full-u64 decimal strings,
+source/provenance/bounds/declarations/public labels/preview counts, protocol2 and
+whole-pair recovery/cache commitments. No importer/cost engine/investment API yet.
+Initial82/20/4 green +8 restored faults STILL missed strict-field defects. Independent
+review and parent reproduced ignored claims on tagged empty variants/completeness
+payloads. Parent repaired those with one strict empty-map decoder across28 unit
+variants and strict completeness payload decoding, retaining canonical encodings/
+Rust variants (no compatibility alias). Permanent malformed/valid controls, actual
+request/control/recovery heads and3 restored behavioral faults support the repair.
+Full87/20/4/strict native+contractwasm and preserved18+2 owned probes now pass.
+Independent repair review repeated those and4 own controls with unchanged source:
+ACCEPTABLE for native staged/hosted handoff WITH runtime gates. **H0 acceptance
+remains withheld pending complete staged/hosted exact snapshot.**
 
-Worktree branch: `feat/rust-decision-engine`. Rust 1.98.1 is installed under
-`$HOME/.cargo/bin`; prepend it to PATH for cargo/pre-commit. Toolchain, wasm32,
-rustfmt and Clippy are pinned. External pre-commit framework is 4.6.2 with exact
-hashed requirements in `.github/`; there is no first-party Python/Node source.
+Current reports: tmp/G1_ACCEPTANCE.md; h0-material-contract-evidence.md;
+h0-material-review-evidence.md (historical FIX REQUIRED); h0-parent-availability-finding.md;
+h0-shape-repair-evidence.md and h0-shape-repair-review-evidence.md. INITIAL reviewer
+final summary was empty after provider timeouts;
+detailed findings were saved and parent repeated ALL18 probes before/after repairs.
+Original failing reports/harnesses/logs unchanged. Local OSV DNS timeout was preserved;
+normal lookup/HTTPS recovered, then actual fail-closed framework query passed without
+policy changes. This is scoped advisory evidence, never zero-vulnerability proof.
 
-PUBLIC remote, main protection, vulnerability alerts, automated security fixes,
-secret scanning/push protection verified via API; auto-merge disabled. Feature
-updates must go through the protected PR, not a direct push to main.
+## Delivery and next actions
 
-Current handoff status: **G1 ACCEPTED AT THE NATIVE CONTRACT BOUNDARY**, commit
-`1b664913a3d25f86e97b18b1069a442276e9b760`, run40582912311attempt1. Not production
-or release acceptance. P1/H0 shared-schema/build/lease prerequisites remain before
-engine/UI source launch; no automatic orchestrator resume.
-- Orchestrator **450363 remains intentionally SIGSTOP-paused**. Phase 0/1 artifacts
-  are under `tmp/big-build/aaru-engine`; read complete phase1 QA, not just headings.
-- Independent review `tmp/g1-review.md` found five blockers despite passing tests.
-  `tmp/g1-repairs.md` records their repairs, 34 passing contract tests and twelve
-  isolated detected/reverted faults. Native FSM evidence is not browser proof.
-- Real optimized-WASM probes observed allowed 16 MiB fingerprints at 56–66 ms and
-  decoding at 77–92 ms. `tmp/g1-budget-evidence.md` records exact scope/provenance.
-  The approved sibling-worker design is in `tmp/g1-bulk-architecture.md`, with
-  binding integration amendments in `tmp/g1-bulk-acceptance.md`.
-- Independent review `tmp/g1-independent-review-evidence.md` returned **G1 FIX
-  REQUIRED** despite independently passing 51 contract/20 policy/4 Git tests twice.
-  Six issues: DOM memory discard, account+UI-checkpoint transition ordering,
-  actual storage-refresh installation, activation rebinding, memory-only revision
-  exhaustion and matching traversal-shaped catalog paths. Four normative probes
-  failed; two additional transition gaps have executed witnesses/source arguments.
-  Parent additionally executed `tmp/g1-retention-finding.md`: saved A + session B
-  + candidate C retains three distinct source bodies despite bound two.
-- Composed repairs closed the original seven at native-contract scope; later
-  dangling-subject and unreadable-current-header probes still failed. Final-seam
-  writer finished both repairs: `tmp/g1-final-seam-repairs-evidence.md`, 71/20/4
-  cases and18 restored behavioral faults. Parent matched source fingerprint
-  `81bea9f7a9f453bfc380562e7a2cdaca5ce964c6a03cb513a8f9e61d54ac39b6`
-  and reproduced the complete tests/strict native/contract-WASM checks. Independent
-  final review finished15 probes, supporting all nine native seams; its whole-
-  comparison16MiB interpretation was wrong, reinforced by parent's review prompt.
-- Parent executed the compound-budget regression then corrected it after review:
-  `tmp/g1-compound-budget-finding.md` and `tmp/g1-budget-scope-evidence.md`.
-  Original profile is16MiB PER DECISION and128MiB TOTAL compound/final wire,
-  including envelope overhead. No lower whole-comparison cap. Corrected source
-  `bf5cb79a84ca4759369436e8e9c669a9241e73ea9eed24970b98ea3e5766cab9`
-  passes73/20/4, native/WASM strict checks, all-files pre-commit and security checks.
-  Three isolated full-suite budget faults fail assertions; exact restoration.
-  Original failing probes stay unchanged; new adapted whole harness74passes.
-  Narrow independent follow-up finished21 owned controls and73/20/4 twice, no
-  remaining budget code defect. It found one stale contradictory contract sentence;
-  parent corrected that documentation-only defect. Review ownership is released.
-  Complete reviewed snapshot/staged/all-files/native/WASM/security checks and normal
-  commit hooks passed. Parent repeated all21 probes. Foundation5b9c64f and reviewed
-  hardening update1b66491 are pushed. Fresh40582912311 passed Linux native, Windows
-  native, dependency security and Quality gate. Parent decision tmp/G1_ACCEPTANCE.md.
-  Native maximum tests are not browser memory/paint/Worker proof.
-- Full-product replacement plan ADOPTED under `tmp/big-build/aaru-engine/phase1/`:
-  master-plan, architecture, delivery, acceptance and threads.json; read ALL parts.
-  Parent assessment amendments applied: correct byte scopes/current APIs, H0 material/
-  public schemas first, genuine initial source before full workspace/build validation,
-  two disjoint leases, all16 requirements and19functional/12browser rows. Old plans
-  archived as pre-replan, failed giant-write recovery unadopted. P1/H0 not launched.
-- Parent owns policy/hygiene, hooks/workflows/framework locks and acceptance docs.
-  Contract coordinator must not stage or commit. Parent stages the complete reviewed
-  snapshot only after ownership settles; staged-blob checks must match that snapshot.
-- Locked local Rust hook equivalents retain pre-commit without separately resolved
-  generic-hook environments. Policy passed 20 unit + 4 real temporary-Git/CLI tests,
-  strict Clippy, formatting and actual staged-repository inspection. This includes
-  staged/worktree separation, raw adversarial cases, key detection, portability,
-  exact 2 MiB/mode boundaries and mandatory Linux/Windows/advisory CI enforcement.
-- Rust OSV checks cover the exact hash-locked external framework dependency graph,
-  reject advisories regardless of severity and fail closed on errors. Live query,
-  denied-warning cargo-audit and cargo-deny passed the checked snapshot. Rerun all
-  on final integration; do not claim zero vulnerabilities or universal database coverage.
-- Historical foundation `5b9c64f3c36e7146735cdff1f0c57767b3c2b018`,
-  run40579865822: Windows native and dependency security succeeded; Linux checkout
-  failed three times connecting to allowed github.com under blocked egress. Raw
-  API/logs prove that failure even while run/job summaries still say in_progress.
-  Do not treat delayed summary status or later green as erasing this failure.
-- Official StepSecurityv2.22.3 released2026-10-27 explicitly addresses GitHub DNS/
-  outbound-proxy false blocks. Parent verified tag46b06cea07f9e64621fdf066ba77ac6915163d43,
-  source/checksums (Linux agent0.18.0), and updated all three immutable action pins;
-  Linux block/Windows audit/privilege/endpoint policy unchanged. Fresh40582912311
-  all required jobs succeeded; Linux log confirms block and the expected0.18.0 checksum.
-  Stuck failed40579865822 was force-cancelled after normal cancellation failed, NOT
-  relabeled green. Success is consistent with the vendor fix, not universal resolver
-  proof. Historical72f2048 green and40493810875 failure remain scoped evidence.
-- Tools: PATH includes `$HOME/.cargo/bin`; audit0.22.2, deny0.20.2 and
-  wasm-bindgen0.2.129 under `/tmp/aaru-audit-tools/bin`. Sandbox Chrome/driver
-  156.0.8078.47 paths/provenance are in `tmp/RUNTIME_PROBE.md`. Completed disposable
-  topology probe: `tmp/g0-topology-probe-evidence.md`, immutable 72f2048 dependency,
-  two real Linux Chrome runs and three detected runtime faults. Actual 16 MiB bytes,
-  sibling target disappearance, IDB abort/complete/CAS and retained-Blob behavior
-  observed. Local input-to-DOM cancellation 0.2–0.6 ms is NOT painted-pixel proof;
-  long-run Blob/RSS/revocation/production/Windows behavior remains open. Parent
-  independently verified no probe Chrome/driver processes or server ports remain.
-- Public-source research finished: `tmp/live-source-research-evidence.md`; parent
-  review `tmp/live-source-research-parent-review.md`. GOOD docs confirm optional
-  material balances in v2/v3 (absent remains unknown), unboosted talents and
-  percentage-point semantics; GOOD_REFERENCE.md now records documentary evidence.
-  Current gcsim notice is AGPLv3-or-later since 2026-09-19, not wholly MIT; no current
-  code reuse authorized. KQM/data/prose/artwork rights and actual numeric/cost tables
-  remain unresolved. Directory counts include custom definitions, not live coverage.
-  Parent flagged the proposed ICD timeline as insensitive to its stated fault;
-  strengthen and execute future oracles, never inherit a green assertion blindly.
-  Research is not mechanics implementation or waiver of substantial fixtures first.
-- Unnecessary first-party source/test/config comments were removed. Necessary
-  action-version metadata remains. Keep the rule in all subsequent implementations.
-- Next P1/H0: parent coordinates canonical material knowledge/counts/provenance and
-  public import/catalog/labels, exact dependency/manifest/entrypoint/build interfaces.
-  Then allocated E/U GENUINE initial source, park both for parent-only integration,
-  full all-target validation and real optimized inventory/IDB/settings/cancellation/
-  export vertical on Windows/Linux. No fake libs/workers or missing-target masking.
-  Extensive realistic corpus BEFORE recommendations; source-backed mechanics/search/
-  allocation/donor/recompute, DISTINCT roster/investment and full release evidence.
-  Protected PR/no auto-merge, complete staged/all-files/hooks and fresh CI each commit.
+Full replacement plan adopted under tmp/big-build/aaru-engine/phase1/: read ALL
+master-plan/architecture/delivery/acceptance/threads.json/qa-review. Parent amendments
+applied, old artifacts archived. Orchestrator450363 stays paused; do NOT resume stale
+builders. At most TWO nonoverlapping E/U source leases. Parent owns ALL shared
+schemas/contracts/manifests/locks/pins/build/bootstrap/server/security/CI/authority;
+E engine/WASM runtime src/tests+fixture/mechanics CONTENT; U DOM/supervisor/browser
+src/tests/static original HTMLCSS/player help. Park both for shared changes, one
+reviewed fingerprint and explicit acknowledgments before resume.
 
-Artifacts in ignored `.agent-docs/tmp/` are temporary evidence/coordination, not
-release deliverables or binding product requirements. Keep this note current and
-remove obsolete process details. No release claim until actual product evidence.
+Next: close H0 exact staged/hosted gates. Read new p1-{engine,ui}-handoff-plan-evidence
+proposals; parent must reconcile actual inventory-presentation/persisted-UI/import
+metadata gaps before source launch. Freeze public import/catalog/material and exact
+manifest/feature/entrypoint proposals. Allocate GENUINE initial E/U source,
+then PARK both for parent manifest/lock/build/loader/server integration; validate ALL
+actual native/WASM targets. No stub libs/workers/fake events/missing-target hiding.
+P1 proposal tmp/p1-build-runtime-interface-proposal.md isn't executed/frozen.
 
-Hosted enforcement contract:
-- Remote main must require pull requests and the GitHub Actions check named
-  `Quality gate` with strict up-to-date checks, including administrators. The CI
-  workflow MUST provide this aggregate job and fail it on failed/skipped required
-  jobs. No automated merging. Work on `feat/rust-decision-engine`, not remote main.
-- StepSecurity's public GitHub-hosted tier is free. Harden every job as its first
-  step. Windows supports audit mode only; Linux supports block mode. Verify actual
-  behavior in hosted runs, not just action presence. Upstream reference:
-  https://github.com/step-security/harden-runner . No paid subscriptions authorized.
+Require early actual optimized file/sample/catalog/preview/explicit settings choice/
+activation/export/checkpoint/storage/cancellation/reload on Windows AND Linux. G0
+Linux research used older code/protocol; codec56–96ms, DOM/rAF cancellation isn't
+paint, listener/Blob/RSS/revocation/production/Windows behavior remains OPEN.
+Then extensive REALISTIC synthetic corpus BEFORE recommendations, broad source-
+backed kernel/rights/costs, full search/allocation/equipment/recompute, distinct
+roster/investment, causal/sensitivity/accessibility and operational/deepQA/package/
+help. Every release row still requires relevant actual evidence, not counts/mocks/
+snapshots/coverage/mutation theater. Follow PRODUCT_LANGUAGE's accurate original
+Aaru/Sumeru identity/plain English, no spoilers/assets/implied HoYoverse integration.
 
-Release is blocked until verified mechanics coverage, full behavior/UI/security
-checks and honest scope documentation exist. A synthetic-data demonstration is
-not a validated live-account recommendation release.
+Source research dossiers are untrusted references. Current gcsim AGPL, historical
+MIT not blanket permission; GO software/prose/assets/numbers differ; KQM unresolved.
+Progression-cost dossier has useful conditional rows/original arithmetic and source
+contradictions, NOT rights/current-game/broad coverage clearance. Community token-
+based90/95/100 documentation isn't a universal legality/profile decision. Missing
+partial EXP/AR/unlocks/rounding/RNG/history/costs remain unknown, not invented.
+
+PATH=$HOME/.cargo/bin:/tmp/aaru-audit-tools/bin:$PATH; Rust1.98.1/audit0.22.2/deny0.20.2/
+wasm-bindgen0.2.129. Follow .agent-deny, never inspect credentials/private accounts/
+dependencies/generated output. tmp/CURRENT_HANDOFF.md tracks live tasks; ignored tmp
+artifacts are coordination/evidence, not release deliverables or requirement waivers.

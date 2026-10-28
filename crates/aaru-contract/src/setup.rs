@@ -11,6 +11,7 @@ pub enum DefinitionKind {
     Character,
     Weapon,
     ArtifactSet,
+    Material,
     Stat,
     Encounter,
     Assumption,
@@ -34,6 +35,7 @@ pub enum ParameterTarget {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ParameterDomain {
+    #[serde(deserialize_with = "crate::wire::deserialize_empty_variant")]
     Flag,
     Quantity {
         unit: QuantityUnit,

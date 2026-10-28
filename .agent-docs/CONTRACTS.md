@@ -1,8 +1,10 @@
-# Shared schema 1 — current engine/browser handoff
+# Shared schema 2 — H0 material and strict-shape candidate
 
 `crates/aaru-contract` owns the shared Rust types, validators and pure state
-machines. This document defines adapter obligations. **G1 is not accepted. Engine
-and UI builders must not start until parent review.** The sibling-worker design
+machines. This document defines adapter obligations. **Native G1 was accepted at
+1b66491/run40582912311. H0's repaired native candidate passed independent review,
+but its staged/hosted acceptance remains pending and is not covered by G1.
+Engine/UI consumers must not start yet.** The sibling-worker design
 is approved; its implementation, timing, platform feasibility and product are not.
 No engine, UI builder source or WorkerEvent implementation is supplied here.
 
@@ -384,6 +386,15 @@ All actual IDB transaction/CAS/crash semantics remain real-browser obligations.
 
 ## Inventory, trust, numeric and decision semantics
 
+Account schema2 requires `materials: Section<MaterialBalance>` on EVERY canonical
+snapshot. Schema1 and missing-material snapshots are rejected, not defaulted or
+migrated. Logical/compact protocol2 accompanies the new mandatory
+`PreparedHead.material_kinds` count and Materials import declarations; old protocol1
+is rejected. ImportProfileVersion1 is unchanged: no GOOD importer/conversion is
+implemented here. CatalogVersion1 retains the existing generic public-label shape
+and meaning, now also accepting `DefinitionKind::Material`; no ontology or content
+revision is invented. Consumers must use the same reviewed contract fingerprint.
+
 `Section` preserves Omitted versus supplied-empty. Array presence/GOOD fields do
 NOT certify completeness. Completeness is an assertion, not scanner verification.
 CurrentLoadout and MoveOnly require every selected physical owner's weapon and
@@ -395,6 +406,39 @@ assertions carry User statement or Exporter name + original SourceRef. Applying
 declarations never converts Omitted to empty, defaults completeness or upgrades it
 silently; duplicates/invalid provenance fail. Engine verifies source pointers and
 exporter claims against actual bytes, without presenting assertions as audits.
+
+Materials are balances by `DefinitionId`, NOT owned ItemId/CharacterId copies.
+`MaterialBalance` contains definition, quantity, optional SourceRef and bounded
+Provenance records. Definitions must be unique within the material section (at most
+16,384 kinds); each balance permits at most128 provenance entries. Public labels
+use the existing PublicDefinition/Catalog bounds. They verify neither costs nor kits.
+Materials never enter gear footprints, pins, movement or character availability.
+No material causal subjects or cost/budget/investment operation APIs exist yet (H3).
+Missing/unknown materials do not disable unrelated non-cost team/build/equipment
+validation; future cost claims require explicit evidenced costs and budget inputs.
+
+MaterialQuantity is exactly `{"status":"unknown"}` OR
+`{"status":"known","amount":"18446744073709551615"}`. Known amounts use Counter's
+canonical nonnegative u64 decimal STRING, including zero and counts above2^53; no
+JSON numbers, sign, leading zeroes, fractions, exponents, whitespace, rounding,
+clamping or overflow. Unknown has no amount, not zero/infinity. Empty variants use
+strict empty-map decoding, including internally tagged unit variants in requests,
+recovery, controls, decision metadata and parameter domains. Unexpected payloads
+are rejected without changing canonical encodings or maintaining old-shape aliases.
+Declared-complete payloads also reject unrecognized verification/provenance fields;
+a valid completeness assertion remains an assertion, not an audit. Raw GOOD numeric
+lexeme conversion is the forthcoming importer's responsibility.
+
+`ValidatedAccount::material_balance(&DefinitionId)` returns MaterialQuantity.
+An explicit record wins, even Unknown under complete coverage. Absent is Known(0)
+ONLY under valid DeclaredComplete; Omitted, Unspecified-empty and partial-empty
+are Unknown. These sections, explicit Unknown, Known(0), known amounts and declared
+complete-empty remain distinct canonical states even when two lookups agree.
+No records().is_empty knowledge inference. User/exporter completeness assertions
+remain attributable assertions, never audits. SourceRefs require the retained archive,
+matching digest and syntactically valid RFC6901 pointers (including ~0/~1 escapes).
+Actual pointer targets/GOOD values/exporter claims require importer verification;
+shared validation does not parse source bytes as mechanics or manufacture balances.
 
 All canonical IDs globally unique; identical definitions of equipment are distinct
 physical copies. Character definitions/forms cannot duplicate ownership. Resolved
@@ -504,8 +548,13 @@ Sensitivity changes only explicit assumptions/encounters, at most16 unique scena
 validate full reruns/rank summaries/deltas without invented probabilistic confidence.
 Marginal roster/investment decisions are not implemented by equipment comparison.
 
-Semantic digest sorts records/pins/substats and removes source refs/archive/
-provenance, retaining coverage/IDs/availability/progression/ownership/policy.
+Semantic digest sorts records/pins/substats (materials by definition) and removes
+per-record source refs/archive/provenance, retaining material coverage, explicit
+known/unknown quantities and exact counts along with IDs/availability/progression/
+ownership/policy. Completeness assertions retain their existing attributed encoding.
+Material changes invalidate snapshot/Backup commitments, sample inventory trust,
+semantic result/cache keys and account-bound recovery/UI commitments. Backup,
+prepared activation and durable/session recovery carry the whole mandatory section.
 Snapshot digest hashes compact AccountSnapshot; Backup digest includes sample
 binding. Spec hash includes all fields. Result fingerprint is compact tuple
 `["aaru-result-v1", account_semantics, spec_digest, engine_version, engine_revision]`.
@@ -516,7 +565,7 @@ Exact arithmetic/fingerprints are reproducibility, not verified game truth.
 | Surface | Bound |
 | --- | --- |
 | Original source / escaped wire-backup | 16 MiB / 128 MiB |
-| Characters / weapons / artifacts | 256 / 4,096 / 16,384 |
+| Characters / weapons / artifacts / material kinds | 256 / 4,096 / 16,384 / 16,384 |
 | JSON depth / container entries / ordinary string bytes | 64 / 65,536 / 4,096 |
 | Numeric lexeme bytes / absolute exponent | 128 / 128 |
 | Control/page encoded bytes / page rows | 16 KiB / 24 |
@@ -568,18 +617,26 @@ it does not prove replacement cancellation, memory, storage or platform behavior
 Partial backup, NOT an evaluable current-loadout account:
 
 ```json
-{"account":{"schema_version":1,"id":"empty-account","characters":{"coverage":"omitted"},"weapons":{"coverage":"supplied","completeness":"declared_partial","records":[]},"artifacts":{"coverage":"omitted"},"preferences":{"game_lock_policy":"protect_from_reassignment","protected_items":[],"pinned":[],"excluded_characters":[],"excluded_items":[]},"source_archive":null,"provenance":[]},"sample":null}
+{"account":{"schema_version":2,"id":"empty-account","characters":{"coverage":"omitted"},"weapons":{"coverage":"supplied","completeness":"declared_partial","records":[]},"artifacts":{"coverage":"omitted"},"materials":{"coverage":"omitted"},"preferences":{"game_lock_policy":"protect_from_reassignment","protected_items":[],"pinned":[],"excluded_characters":[],"excluded_items":[]},"source_archive":null,"provenance":[]},"sample":null}
 ```
 
 ```json
-{"protocol_version":1,"context":{"epochs":{"session":"example-session","worker":"0","reset":"0"},"account_semantics":null,"engine":{"version":"0.1.0","revision":"example-engine"}},"fingerprint":"19c72a551bea153aaf0484f564067565dbe2f6346f29b20cafbbd1914a14a792","request_id":"catalog-1","account_generation":"0","payload":{"type":"get_catalog"}}
+{"protocol_version":2,"context":{"epochs":{"session":"example-session","worker":"0","reset":"0"},"account_semantics":null,"engine":{"version":"0.1.0","revision":"example-engine"}},"fingerprint":"19c72a551bea153aaf0484f564067565dbe2f6346f29b20cafbbd1914a14a792","request_id":"catalog-1","account_generation":"0","payload":{"type":"get_catalog"}}
 ```
 
 ```json
-{"protocol_version":1,"context":{"epochs":{"session":"example-session","worker":"0","reset":"0"},"account_semantics":null,"engine":{"version":"0.1.0","revision":"example-engine"}},"fingerprint":"4ad2f15d8d8e53bf17d3eea0d36ba55c40b48f5b8fd6f03375ba1797779f491e","request_id":"sample-1","account_generation":"0","payload":{"type":"prepare_import","input":{"type":"sample","id":"syn-welcome"}}}
+{"protocol_version":2,"context":{"epochs":{"session":"example-session","worker":"0","reset":"0"},"account_semantics":null,"engine":{"version":"0.1.0","revision":"example-engine"}},"fingerprint":"4ad2f15d8d8e53bf17d3eea0d36ba55c40b48f5b8fd6f03375ba1797779f491e","request_id":"sample-1","account_generation":"0","payload":{"type":"prepare_import","input":{"type":"sample","id":"syn-welcome"}}}
 ```
 
-## Scoped native evidence and remaining gates
+## Historical G1 native evidence and remaining gates
+
+The executions below describe the accepted pre-extension snapshot, not schema2
+acceptance. Current H0 evidence is separate: `tmp/h0-material-contract-evidence.md`,
+`tmp/h0-shape-repair-evidence.md` and `tmp/h0-shape-repair-review-evidence.md`.
+Repaired87 contract/20 policy/4 Git tests, strict native/contract-WASM and unchanged
+18+2 original probes pass; independent repair review also executed4 own controls.
+The historical16pass/2fail review remains unchanged. Staged/hosted gates remain;
+this native evidence does not establish importer, browser or release acceptance.
 
 Executed on Linux2026-10-27, Rust/Cargo1.98.1, base HEAD72f2048 plus unstaged
 integration. Current source/test/dependency manifest, excluding this document:

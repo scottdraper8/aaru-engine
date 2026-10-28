@@ -178,7 +178,10 @@ pub struct AccountHead {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum DurableContent {
-    Account { account: AccountHead },
+    Account {
+        account: AccountHead,
+    },
+    #[serde(deserialize_with = "crate::wire::deserialize_empty_variant")]
     Tombstone,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -226,6 +229,7 @@ pub struct PreparedHead {
     pub characters: u16,
     pub weapons: u16,
     pub artifacts: u16,
+    pub material_kinds: u16,
     pub issues: Vec<IssueCode>,
 }
 impl PreparedHead {
@@ -234,6 +238,7 @@ impl PreparedHead {
             usize::from(self.characters) <= MAX_CHARACTERS
                 && usize::from(self.weapons) <= MAX_WEAPONS
                 && usize::from(self.artifacts) <= MAX_ARTIFACTS
+                && usize::from(self.material_kinds) <= MAX_MATERIAL_KINDS
                 && self.issues.len() <= MAX_DIAGNOSTICS,
             "prepared preview bounds",
         )
@@ -304,6 +309,7 @@ pub struct AccountChangeConfirmation {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum CheckpointPolicy {
+    #[serde(deserialize_with = "crate::wire::deserialize_empty_variant")]
     PreserveAccepted,
     ConfirmedReplacement {
         confirmation: Box<AccountChangeConfirmation>,
@@ -541,12 +547,22 @@ impl PresentationPage {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ActionIntent {
-    ImportSample { sample: SampleId },
-    ImportFile { offer: SourceOffer },
+    ImportSample {
+        sample: SampleId,
+    },
+    ImportFile {
+        offer: SourceOffer,
+    },
+    #[serde(deserialize_with = "crate::wire::deserialize_empty_variant")]
     Evaluate,
+    #[serde(deserialize_with = "crate::wire::deserialize_empty_variant")]
     Compare,
+    #[serde(deserialize_with = "crate::wire::deserialize_empty_variant")]
     Sensitivity,
-    Export { format: ExportFormat },
+    Export {
+        format: ExportFormat,
+    },
+    #[serde(deserialize_with = "crate::wire::deserialize_empty_variant")]
     Catalog,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -821,10 +837,12 @@ pub enum Control {
     ProposeClear {
         plan: ClearPlan,
     },
+    #[serde(deserialize_with = "crate::wire::deserialize_empty_variant")]
     ClearReservationAccepted,
     ClearComplete {
         plan: ClearPlan,
     },
+    #[serde(deserialize_with = "crate::wire::deserialize_empty_variant")]
     ClearAborted,
     ReservationAccepted {
         token: PreparedToken,
@@ -872,10 +890,15 @@ pub enum Control {
         message: String,
         recoverable: bool,
     },
+    #[serde(deserialize_with = "crate::wire::deserialize_empty_variant")]
     Cancel,
+    #[serde(deserialize_with = "crate::wire::deserialize_empty_variant")]
     Retry,
+    #[serde(deserialize_with = "crate::wire::deserialize_empty_variant")]
     ClearLocalData,
+    #[serde(deserialize_with = "crate::wire::deserialize_empty_variant")]
     DiscardSession,
+    #[serde(deserialize_with = "crate::wire::deserialize_empty_variant")]
     Shutdown,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
